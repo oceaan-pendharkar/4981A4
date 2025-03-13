@@ -37,33 +37,12 @@ int main(int arg, const char *argv[])
     struct sockaddr_in client_addr;
     unsigned int       client_addrlen = sizeof(client_addr);
     // Create a TCP socket
-    int           server_fd = socket(AF_INET, SOCK_STREAM, 0);    // NOLINT(android-cloexec-socket)
-    struct kevent event;
-    int           fd = open("http.so", O_RDONLY | O_CLOEXEC);
-    int           kq = kqueue();
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);    // NOLINT(android-cloexec-socket)
     if(server_fd == -1)
     {
         perror("webserver (socket)");
         free(client_sockets);
-        close(fd);
         return 1;
-    }
-    if(kq == -1)
-    {
-        perror("kqueue");
-        exit(EXIT_FAILURE);
-    }
-    if(fd == -1)
-    {
-        perror("open");
-        exit(EXIT_FAILURE);
-    }
-    EV_SET(&event, (uintptr_t)fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR, NOTE_WRITE | NOTE_DELETE, 0, NULL);
-
-    if(kevent(kq, &event, 1, NULL, 0, NULL) == -1)
-    {
-        perror("kevent");
-        exit(EXIT_FAILURE);
     }
 
     handle = dlopen("../http.so", RTLD_NOW);
@@ -71,7 +50,6 @@ int main(int arg, const char *argv[])
     {
         free((void *)client_sockets);
         fprintf(stderr, "dlopen failed: %s\n", dlerror());
-        close(fd);
         close(server_fd);
         return 1;
     }
@@ -102,7 +80,6 @@ int main(int arg, const char *argv[])
     {
         perror("webserver (bind)");
         close(server_fd);
-        close(fd);
         free(client_sockets);
         dlclose(handle);
         return 1;
@@ -113,7 +90,6 @@ int main(int arg, const char *argv[])
     if(listen(server_fd, SOMAXCONN) != 0)
     {
         perror("webserver (listen)");
-        close(fd);
         close(server_fd);
         free(client_sockets);
         dlclose(handle);
@@ -123,21 +99,11 @@ int main(int arg, const char *argv[])
 
     while(!exit_flag)
     {
-        int             max_fd;                          // Maximum file descriptor for select
-        int             activity;                        // Number of ready file descriptors
-        int             sockn;                           // Temporary socket descriptor
-        ssize_t         valread;                         // For read operations
-        char            buffer[BUFFER_SIZE] = {0};       // Buffer for storing incoming data
-        struct timespec timeout             = {0, 0};    // Non-blocking
-        int             nev                 = kevent(kq, NULL, 0, &event, 1, &timeout);
-        if(nev == -1)
-        {
-            perror("kevent");
-            close(fd);
-            close(server_fd);
-            free(client_sockets);
-            return 1;
-        }
+        int     max_fd;                       // Maximum file descriptor for select
+        int     activity;                     // Number of ready file descriptors
+        int     sockn;                        // Temporary socket descriptor
+        ssize_t valread;                      // For read operations
+        char    buffer[BUFFER_SIZE] = {0};    // Buffer for storing incoming data
 
 // Clear the socket set
 #ifndef __clang_analyzer__
@@ -263,43 +229,6 @@ int main(int arg, const char *argv[])
                                                 "\r\n"
                                                 "Hello, world!";
                     printf("[%s:%u]\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-                    if(nev > 0)
-                    {
-                        if(event.fflags & NOTE_WRITE)
-                        {
-                            printf("so file modified, reloading lib\n");
-                            dlclose(handle);    // close current shared library handle
-
-                            // dynamic loading of shared library
-                            handle = dlopen("../http.so", RTLD_NOW);
-                            if(!handle)
-                            {
-                                free((void *)client_sockets);
-                                fprintf(stderr, "dlopen failed: %s\n", dlerror());
-                                close(server_fd);
-                                return 1;
-                            }
-                        }
-                        if(event.fflags & NOTE_DELETE)
-                        {
-                            printf("so file deleted\n");
-                            close(fd);
-                            my_func = NULL;
-                            fd      = open("http.so", O_RDONLY | O_CLOEXEC);
-                            if(fd < 0)
-                            {
-                                perror("new http.so not found");
-                                break;
-                            }
-                            EV_SET(&event, (uintptr_t)fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR, NOTE_WRITE | NOTE_DELETE, 0, NULL);
-
-                            if(kevent(kq, &event, 1, NULL, 0, NULL) == -1)
-                            {
-                                perror("kevent");
-                                exit(EXIT_FAILURE);
-                            }
-                        }
-                    }
 
                     // retrieving symbol (the function name in the lib is my_function)
                     *(void **)(&my_func) = dlsym(handle, "my_function");
