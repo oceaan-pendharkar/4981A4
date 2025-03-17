@@ -7,11 +7,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/event.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+#if defined(__linux__)
+    #include <sys/epoll.h>
+#elif defined(__FreeBSD__) || defined(__APPLE__)
+    #include <sys/event.h>
+#endif
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
@@ -22,6 +29,7 @@ static void sigint_handler(int signum);
 static int  handle_client(struct sockaddr_in client_addr, int client_fd, void *handle);
 int         recv_fd(int socket);
 int         send_fd(int socket, int fd);
+time_t      get_last_modified_time(const char *path);
 
 // this variable should not be moved to a .h file
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -128,11 +136,38 @@ int main(int arg, const char *argv[])
                 }
                 if(pid == 0)
                 {
+                    // Get last time http.so was modified
+                    time_t last_time = get_last_modified_time("../http.so");
+
                     while(1)
                     {
-                        int sockn;
-                        int handle_result;
-                        int fd = recv_fd(worker_sockets[i][1]);    // recv_fd from monitor
+                        int    sockn;
+                        int    handle_result;
+                        int    fd;
+                        time_t new_time;
+
+                        // Check if http.so has been updated
+                        new_time = get_last_modified_time("../http.so");
+                        if(new_time > last_time)
+                        {
+                            printf("Shared library updated! Reloading...\n");
+
+                            // Close old shared library
+                            dlclose(handle);
+
+                            // Load newer version
+                            handle = dlopen("../http.so", RTLD_NOW);
+                            if(!handle)
+                            {
+                                perror("Failed to load shared library");
+                                free(client_sockets);
+                                return 1;
+                            }
+
+                            last_time = new_time;
+                        }
+
+                        fd = recv_fd(worker_sockets[i][1]);    // recv_fd from monitor
                         if(fd == -1)
                         {
                             perror("webserver: worker (recv_fd)");
@@ -546,5 +581,20 @@ int send_fd(int socket, int fd)
         close(socket);
         return -1;
     }
+    return 0;
+}
+
+// Returns the last time http.so was modified
+time_t get_last_modified_time(const char *path)
+{
+    struct stat attr;
+
+    // On success, return last time file was modified
+    if(stat(path, &attr) == 0)
+    {
+        return attr.st_mtime;
+    }
+
+    // If stat fails, return 0
     return 0;
 }
