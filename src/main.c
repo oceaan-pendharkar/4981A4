@@ -154,6 +154,7 @@ int main(int arg, const char *argv[])
                         time_t new_time;
                         char   last_time_str[TIME_SIZE];
                         char   new_time_str[TIME_SIZE];
+                        void (*my_func)(const char *);
 
                         // Check if http.so has been updated
                         new_time = get_last_modified_time("../http.so");
@@ -169,13 +170,25 @@ int main(int arg, const char *argv[])
                             printf("Shared library updated! Reloading...\n\n");
 
                             // Close old shared library
-                            dlclose(handle);
+                            if(handle)
+                            {
+                                dlclose(handle);
+                            }
 
                             // Load newer version
                             handle = dlopen("../http.so", RTLD_NOW);
                             if(!handle)
                             {
                                 perror("Failed to load shared library");
+                                free(client_sockets);
+                                return 1;
+                            }
+
+                            *(void **)(&my_func) = dlsym(handle, "my_function");
+                            if(!my_func)
+                            {
+                                perror("dlsym failed");
+                                dlclose(handle);
                                 free(client_sockets);
                                 return 1;
                             }
@@ -193,9 +206,6 @@ int main(int arg, const char *argv[])
                         }
 
                         printf("Received client fd in child: %d\n", fd);
-
-                        // check .so object to see if it's new
-                        // if new: dlclose, dlopen, dlsym (set handle)
 
                         // Get client address
                         sockn = getsockname(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addrlen);
