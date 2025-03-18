@@ -23,6 +23,7 @@
 #define PORT 8080
 #define BUFFER_SIZE 1024
 #define CHILDREN 3
+#define TIME_SIZE 20
 
 static void setup_signal_handler(void);
 static void sigint_handler(int signum);
@@ -30,6 +31,7 @@ static int  handle_client(struct sockaddr_in client_addr, int client_fd, void *h
 int         recv_fd(int socket);
 int         send_fd(int socket, int fd);
 time_t      get_last_modified_time(const char *path);
+void        format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
 
 // this variable should not be moved to a .h file
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -49,6 +51,8 @@ int main(int arg, const char *argv[])
     pid_t              child_pids[CHILDREN] = {0};
     pid_t              monitor;
     int                server_fd;
+    time_t             last_modified;
+    char               time_str[TIME_SIZE];
 
     // Create client address
     struct sockaddr_in client_addr;
@@ -63,7 +67,10 @@ int main(int arg, const char *argv[])
         return 1;
     }
 
-    // todo: grab date of last edit to http.so
+    // Grab last modified time of http.so
+    last_modified = get_last_modified_time("../http.so");
+    format_timestamp(last_modified, time_str, sizeof(time_str));     // Convert to human readable
+    printf("http.so last modified time on init: %s\n", time_str);    // Testing
 
     // create domain socket for server -> monitor
     if(socketpair(AF_UNIX, SOCK_STREAM, 0, dsfd) == -1)
@@ -597,4 +604,18 @@ time_t get_last_modified_time(const char *path)
 
     // If stat fails, return 0
     return 0;
+}
+
+// Converts a timestamp into a human readable format
+void format_timestamp(time_t timestamp, char *buffer, size_t buffer_size)
+{
+    struct tm tm_info;
+    if(localtime_r(&timestamp, &tm_info))
+    {
+        strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", &tm_info);
+    }
+    else
+    {
+        perror("Unknown time");
+    }
 }
