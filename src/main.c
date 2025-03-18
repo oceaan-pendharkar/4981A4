@@ -152,12 +152,21 @@ int main(int arg, const char *argv[])
                         int    handle_result;
                         int    fd;
                         time_t new_time;
+                        char   last_time_str[TIME_SIZE];
+                        char   new_time_str[TIME_SIZE];
 
                         // Check if http.so has been updated
                         new_time = get_last_modified_time("../http.so");
+
+                        // Testing
+                        format_timestamp(last_time, last_time_str, sizeof(last_time_str));
+                        format_timestamp(new_time, new_time_str, sizeof(new_time_str));
+                        printf("[Worker %d] Checking http.so timestamps\n", i);
+                        printf("Last: %s | New: %s\n\n", last_time_str, new_time_str);
+
                         if(new_time > last_time)
                         {
-                            printf("Shared library updated! Reloading...\n");
+                            printf("Shared library updated! Reloading...\n\n");
 
                             // Close old shared library
                             dlclose(handle);
