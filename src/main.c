@@ -45,6 +45,9 @@ int         send_fd(int socket, int fd);
 time_t      get_last_modified_time(const char *path);
 void        format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
 static void safe_dbm_fetch(DBM *db, datum key, datum *result);
+static int  worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets);
+static void check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[]);
+static void clean_up_worker_sockets(int **worker_sockets);
 
 // this variable should not be moved to a .h file
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -60,16 +63,12 @@ int main(int arg, const char *argv[])
     int                sd             = 0;                             // Temp variable for socket descriptor
     int                max_fd;                                         // Maximum file descriptor for select
     int                dsfd[2];                                        // the domain socket for server->monitor
-    int                worker_sockets[CHILDREN][2];                    // Stores UNIX socket pairs for each worker
+    int              **worker_sockets;                                 // Stores UNIX socket pairs for each worker
     pid_t              child_pids[CHILDREN] = {0};
     pid_t              monitor;
     int                server_fd;
     time_t             last_modified;
     char               time_str[TIME_SIZE];
-
-    // Create client address
-    struct sockaddr_in client_addr;
-    unsigned int       client_addrlen = sizeof(client_addr);
 
     // initialize shared library
     handle = dlopen("../http.so", RTLD_NOW);
@@ -96,13 +95,30 @@ int main(int arg, const char *argv[])
 
     // create domain socket for monitor -> worker
     // this is my solution for making sure only one child gets a fd from the monitor
+    worker_sockets = (int **)malloc(sizeof(int *) * CHILDREN);
+    if(!worker_sockets)
+    {
+        perror("malloc failed");
+        exit(EXIT_FAILURE);
+    }
     for(int i = 0; i < CHILDREN; i++)
     {
+        worker_sockets[i] = (int *)malloc(sizeof(int) * 2);
+        if(!worker_sockets[i])
+        {
+            perror("malloc failed");
+            exit(EXIT_FAILURE);
+        }
         if(socketpair(AF_UNIX, SOCK_STREAM, 0, worker_sockets[i]) == -1)
         {
             perror("webserver (socketpair)");
             free(client_sockets);
             dlclose(handle);
+            for(int j = i; j >= 0; j--)
+            {
+                free(worker_sockets[j]);
+            }
+            free((void *)worker_sockets);
             return 1;
         }
     }
@@ -116,209 +132,116 @@ int main(int arg, const char *argv[])
     }
     if(monitor == 0)
     {
-        while(1)
+        int worker_index = 0;    // Replace with actual worker selection logic
+
+        // close the end of ds we're going to monitor for in select
+        close(dsfd[0]);
+
+        // pre-fork children
+        for(int i = 0; i < CHILDREN; i++)
         {
-            int   status;
-            pid_t dead_worker;
-            int   next_worker = 0;
-
-            int client_fd;
-            // close the end of ds we're going to monitor for in select
-            close(dsfd[0]);
-
-            // recvmsg: receive client socket from server
-            client_fd = recv_fd(dsfd[1]);
-            if(client_fd == -1)
+            pid_t pid = fork();
+            if(pid < 0)
             {
-                perror("webserver (recv_fd)");
-                close(dsfd[1]);
+                perror("webserver (fork)");
                 dlclose(handle);
                 free(client_sockets);
+                clean_up_worker_sockets(worker_sockets);
                 return 1;
             }
-
-            // todo: round robin
-            // hard coding to send to first worker for now
-            send_fd(worker_sockets[next_worker][0], client_fd);
-
-            printf("received fd in monitor and sent to worker: %d\n", client_fd);
-
-            // pre-fork children
-            for(int i = 0; i < CHILDREN; i++)
+            if(pid == 0)
             {
-                pid_t pid = fork();
-                if(pid < 0)
+                // Get last time http.so was modified
+                time_t last_time = get_last_modified_time("../http.so");
+
+                int result = worker_loop(last_time, handle, i, client_sockets, worker_sockets);
+                if(result != 0)
                 {
-                    perror("webserver (fork)");
-                    dlclose(handle);
-                    free(client_sockets);
-                    return 1;
-                }
-                if(pid == 0)
-                {
-                    // Get last time http.so was modified
-                    time_t last_time = get_last_modified_time("../http.so");
-
-                    while(1)
-                    {
-                        int    sockn;
-                        int    handle_result;
-                        int    fd;
-                        time_t new_time;
-                        char   last_time_str[TIME_SIZE];
-                        char   new_time_str[TIME_SIZE];
-                        void (*my_func)(const char *);
-
-                        // Check if http.so has been updated
-                        new_time = get_last_modified_time("../http.so");
-
-                        // Testing
-                        format_timestamp(last_time, last_time_str, sizeof(last_time_str));
-                        format_timestamp(new_time, new_time_str, sizeof(new_time_str));
-                        printf("[Worker %d] Checking http.so timestamps\n", i);
-                        printf("Last: %s | New: %s\n\n", last_time_str, new_time_str);
-
-                        if(new_time > last_time)
-                        {
-                            printf("Shared library updated! Reloading...\n\n");
-
-                            // Close old shared library
-                            if(handle)
-                            {
-                                dlclose(handle);
-                            }
-
-                            // Load newer version
-                            handle = dlopen("../http.so", RTLD_NOW);
-                            if(!handle)
-                            {
-                                perror("Failed to load shared library");
-                                free(client_sockets);
-                                return 1;
-                            }
-
-                            *(void **)(&my_func) = dlsym(handle, "my_function");
-                            if(!my_func)
-                            {
-                                perror("dlsym failed");
-                                dlclose(handle);
-                                free(client_sockets);
-                                return 1;
-                            }
-
-                            last_time = new_time;
-                        }
-
-                        fd = recv_fd(worker_sockets[i][1]);    // recv_fd from monitor
-                        if(fd == -1)
-                        {
-                            perror("webserver: worker (recv_fd)");
-                            dlclose(handle);
-                            free(client_sockets);
-                            return 1;
-                        }
-
-                        printf("Received client fd in child: %d\n", fd);
-
-                        // Get client address
-                        sockn = getsockname(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addrlen);
-                        if(sockn < 0)
-                        {
-                            perror("webserver (getsockname)");
-                            continue;
-                        }
-                        // handle_client()
-                        printf("handling client...\n");
-                        handle_result = handle_client(client_addr, fd, handle);
-                        if(handle_result == 1)
-                        {
-                            // todo: kill this process ?
-                            printf("Dlsym failed in a child worker\n");
-                        }
-
-                        // sendmsg: send the fd back to the parent
-                        send_fd(dsfd[1], client_fd);
-                        printf("sent client fd back to server: %d\n", client_fd);
-                        close(client_fd);
-                        close(fd);
-                    }
-                }
-                else
-                {
-                    child_pids[i] = pid;
-                    close(worker_sockets[i][1]);    // Close worker's end in monitor
+                    perror("webserver (worker loop)");
+                    exit(EXIT_FAILURE);
                 }
             }
-
-            // monitor code
-
-            dead_worker = waitpid(-1, &status, WNOHANG);    // Check for worker deaths
-            if(dead_worker > 0)
+            else
             {
-                printf("Worker %d died, restarting...\n", dead_worker);
-
-                for(int i = 0; i < CHILDREN; i++)
-                {
-                    if(child_pids[i] == dead_worker)
-                    {
-                        pid_t new_pid;
-                        close(worker_sockets[i][0]);
-                        close(worker_sockets[i][1]);
-
-                        socketpair(AF_UNIX, SOCK_STREAM, 0, worker_sockets[i]);
-                        new_pid = fork();
-                        if(new_pid == 0)
-                        {
-                            close(worker_sockets[i][0]);    // close montor's end of socket pair
-                            // give the new child their client code
-                            while(1)
-                            {
-                                int sockn;
-                                int fd = recv_fd(worker_sockets[i][1]);
-                                if(fd == -1)
-                                {
-                                    perror("webserver (recv_fd)");
-                                    continue;
-                                }
-                                if(client_fd < 0)
-                                {
-                                    continue;
-                                }
-
-                                // Get client address
-                                sockn = getsockname(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addrlen);
-                                if(sockn < 0)
-                                {
-                                    perror("webserver (getsockname)");
-                                    continue;
-                                }
-
-                                handle_client(client_addr, fd, handle);
-                                close(client_fd);
-                            }
-                        }
-                        else if(new_pid > 0)
-                        {
-                            child_pids[i] = new_pid;
-                            close(worker_sockets[i][1]);
-                        }
-                        else
-                        {
-                            perror("Failed to restart worker");
-                        }
-                        break;
-                    }
-                }
+                child_pids[i] = pid;
+                close(worker_sockets[i][1]);    // Close worker's end in monitor
             }
         }
-    }
 
+        // monitor code
+        while(1)
+        {
+            fd_set monitor_read_fds;
+            int    max_monitor_fd = dsfd[1];
+            int    monitor_activity;
+
+            FD_ZERO(&monitor_read_fds);
+
+            // Listen for new client FDs from server
+            FD_SET(dsfd[1], &monitor_read_fds);
+
+            // Listen for worker responses
+            for(int i = 0; i < CHILDREN; i++)
+            {
+                FD_SET(worker_sockets[i][0], &monitor_read_fds);
+                if(worker_sockets[i][0] > max_monitor_fd)
+                {
+                    max_monitor_fd = worker_sockets[i][0];
+                }
+            }
+
+            // Wait for an event on any socket
+            monitor_activity = select(max_monitor_fd + 1, &monitor_read_fds, NULL, NULL, NULL);
+            if(monitor_activity < 0)
+            {
+                perror("select error in monitor");
+                continue;
+            }
+
+            // Receive client FD from server
+            if(FD_ISSET(dsfd[1], &monitor_read_fds))
+            {
+                int client_fd_monitor = recv_fd(dsfd[1]);
+                if(client_fd_monitor > 0)
+                {
+                    printf("Monitor received client FD %d from server\n", client_fd_monitor);
+
+                    // Send the FD to a worker (Round-robin or first available)
+                    send_fd(worker_sockets[worker_index][0], client_fd_monitor);
+                    printf("Monitor sent client FD %d to worker %d\n", client_fd_monitor, worker_index);
+                    worker_index++;
+                    if(worker_index == CHILDREN)
+                    {
+                        worker_index = 0;
+                    }
+                }
+            }
+
+            // Receive processed FDs from workers
+            for(int i = 0; i < CHILDREN; i++)
+            {
+                if(FD_ISSET(worker_sockets[i][0], &monitor_read_fds))
+                {
+                    int returned_fd = recv_fd(worker_sockets[i][0]);
+                    if(returned_fd > 0)
+                    {
+                        printf("Monitor received processed FD %d from worker %d\n", returned_fd, i);
+                        send_fd(dsfd[1], returned_fd);
+                        printf("Monitor sent fd %d back to server\n", returned_fd);
+                        close(returned_fd);    // Clean up after worker has finished
+                    }
+                }
+            }
+            check_for_dead_children(last_modified, handle, client_sockets, worker_sockets, child_pids);
+        }
+    }
     // Create a TCP socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);    // NOLINT(android-cloexec-socket)
     if(server_fd == -1)
     {
         perror("webserver (socket)");
         free(client_sockets);
+        clean_up_worker_sockets(worker_sockets);
         return 1;
     }
 
@@ -332,7 +255,6 @@ int main(int arg, const char *argv[])
     // Initialize client socket, address and number as zero or null
     //    client_sockets = NULL;
     max_clients = 0;
-    memset(&client_addr, 0, sizeof(client_addr));
 
     // Create the address to bind the socket to
     // Initialize the server address structure
@@ -350,6 +272,7 @@ int main(int arg, const char *argv[])
         close(server_fd);
         free(client_sockets);
         dlclose(handle);
+        clean_up_worker_sockets(worker_sockets);
         return 1;
     }
     printf("Socket successfully bound to address\n");
@@ -361,53 +284,54 @@ int main(int arg, const char *argv[])
         close(server_fd);
         free(client_sockets);
         dlclose(handle);
+        clean_up_worker_sockets(worker_sockets);
         return 1;
     }
     printf("Server listening for connections\n\n");
-
-    // Clear the socket set
-#ifndef __clang_analyzer__
-    FD_ZERO(&readfds);
-#endif
-
-#if defined(__FreeBSD__) && defined(__GNUC__)
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wsign-conversion"
-#endif
-    // Add the server socket to the set
-    FD_SET(server_fd, &readfds);
-    // Add the domain socket to the set (for when worker is done with client fd and sends it back)
-    FD_SET(dsfd[0], &readfds);
-#if defined(__FreeBSD__) && defined(__GNUC__)
-    #pragma GCC diagnostic pop
-#endif
-    max_fd = server_fd;
-    printf("adding client sockets\n");
-    // Add the client sockets to the set
-    for(size_t i = 0; i < max_clients; i++)
-    {
-        sd = client_sockets[i];
-        if(sd > 0)
-        {
-#if defined(__FreeBSD__) && defined(__GNUC__)
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wsign-conversion"
-#endif
-            FD_SET(sd, &readfds);
-#if defined(__FreeBSD__) && defined(__GNUC__)
-    #pragma GCC diagnostic pop
-#endif
-        }
-        if(sd > max_fd)
-        {
-            max_fd = sd;
-        }
-    }
 
     printf("entering loop\n\n");
     while(!exit_flag)
     {
         int activity;    // Number of ready file descriptors
+
+        // Clear the socket set
+#ifndef __clang_analyzer__
+        FD_ZERO(&readfds);
+#endif
+
+#if defined(__FreeBSD__) && defined(__GNUC__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wsign-conversion"
+#endif
+        // Add the server socket to the set
+        FD_SET(server_fd, &readfds);
+        // Add the domain socket to the set (for when worker is done with client fd and sends it back)
+        FD_SET(dsfd[0], &readfds);
+#if defined(__FreeBSD__) && defined(__GNUC__)
+    #pragma GCC diagnostic pop
+#endif
+        max_fd = server_fd;
+        printf("adding client sockets\n");
+        // Add the client sockets to the set
+        for(size_t i = 0; i < max_clients; i++)
+        {
+            sd = client_sockets[i];
+            if(sd > 0)
+            {
+#if defined(__FreeBSD__) && defined(__GNUC__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wsign-conversion"
+#endif
+                FD_SET(sd, &readfds);
+#if defined(__FreeBSD__) && defined(__GNUC__)
+    #pragma GCC diagnostic pop
+#endif
+            }
+            if(sd > max_fd)
+            {
+                max_fd = sd;
+            }
+        }
 
         printf("maxfd: %d\n", max_fd);
 
@@ -424,7 +348,6 @@ int main(int arg, const char *argv[])
         if(FD_ISSET(server_fd, &readfds))
         {
             int *temp;
-            int  received_fd_from_client;
             // Accept incoming connections
             int newsockfd = accept(server_fd, (struct sockaddr *)&host_addr, (socklen_t *)&host_addrlen);
             if(newsockfd < 0)
@@ -451,8 +374,7 @@ int main(int arg, const char *argv[])
             }
             printf("Sending client fd %d\n", newsockfd);
             send_fd(dsfd[0], newsockfd);
-            received_fd_from_client = recv_fd(dsfd[0]);
-            printf("received fd from client: %d\n", received_fd_from_client);
+            close(newsockfd);
 
 #if defined(__FreeBSD__) && defined(__GNUC__)
     #pragma GCC diagnostic push
@@ -463,28 +385,26 @@ int main(int arg, const char *argv[])
     #pragma GCC diagnostic pop
 #endif
             client_sockets[max_clients - 1] = 0;
-            close(received_fd_from_client);
         }
 
         if(FD_ISSET(dsfd[0], &readfds))
         {
-            printf("received fd from client on domain socket\n");
-            // re-enable client fd for reading in select
+            int fd_from_monitor;
+            printf("received fd from monitor on domain socket\n");
+            fd_from_monitor = recv_fd(dsfd[0]);
+            printf("received fd from monitor: %d\n", fd_from_monitor);
+            close(fd_from_monitor);
         }
     }
+    close(server_fd);
     dlclose(handle);    // close shared library handle
     free((void *)client_sockets);
-    close(server_fd);
 
     // close domain socket fds
     close(dsfd[0]);
     close(dsfd[1]);
 
-    for(int i = 0; i < CHILDREN; i++)
-    {
-        close(worker_sockets[i][0]);
-        close(worker_sockets[i][1]);
-    }
+    clean_up_worker_sockets(worker_sockets);
     return EXIT_SUCCESS;
 }
 
@@ -732,4 +652,160 @@ static void safe_dbm_fetch(DBM *db, datum key, datum *result)
 
     result->dptr  = temp.dptr;
     result->dsize = temp.dsize;
+}
+
+static void check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[])
+{
+    int dead_worker;
+    int status;
+    while((dead_worker = waitpid(-1, &status, WNOHANG)) > 0)
+    {
+        printf("Worker %d died, restarting...\n", dead_worker);
+
+        // Find the corresponding worker index
+        for(int i = 0; i < CHILDREN; i++)
+        {
+            if(child_pids[i] == dead_worker)
+            {
+                pid_t new_pid;
+                // Restart the worker
+                close(worker_sockets[i][0]);
+                close(worker_sockets[i][1]);
+
+                // Recreate the socket pair
+                if(socketpair(AF_UNIX, SOCK_STREAM, 0, worker_sockets[i]) == -1)
+                {
+                    perror("Failed to create worker socket pair");
+                    continue;
+                }
+
+                new_pid = fork();
+                if(new_pid == 0)
+                {
+                    int result;
+                    // Worker process
+                    close(worker_sockets[i][0]);                                                   // Close monitor’s end
+                    result = worker_loop(last_time, handle, i, client_sockets, worker_sockets);    // Start worker loop
+                    if(result != 0)
+                    {
+                        perror("webserver (worker_loop) failed");
+                        exit(1);
+                    }
+                    exit(EXIT_SUCCESS);
+                }
+                else if(new_pid > 0)
+                {
+                    // Monitor process
+                    child_pids[i] = new_pid;
+                    close(worker_sockets[i][1]);    // Close worker’s end in monitor
+                }
+                else
+                {
+                    perror("Failed to restart worker");
+                }
+                break;
+            }
+        }
+    }
+}
+
+static int worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets)
+{
+    while(1)
+    {
+        int    sockn;
+        int    handle_result;
+        int    fd;
+        time_t new_time;
+        char   last_time_str[TIME_SIZE];
+        char   new_time_str[TIME_SIZE];
+        void (*my_func)(const char *);
+        // Create client address
+        struct sockaddr_in client_addr;
+        unsigned int       client_addrlen = sizeof(client_addr);
+        memset(&client_addr, 0, sizeof(client_addr));
+
+        // Check if http.so has been updated
+        new_time = get_last_modified_time("../http.so");
+
+        // Testing
+        format_timestamp(last_time, last_time_str, sizeof(last_time_str));
+        format_timestamp(new_time, new_time_str, sizeof(new_time_str));
+        printf("[Worker %d] Checking http.so timestamps\n", i);
+        printf("Last: %s | New: %s\n\n", last_time_str, new_time_str);
+
+        if(new_time > last_time)
+        {
+            printf("Shared library updated! Reloading...\n\n");
+
+            // Close old shared library
+            if(handle)
+            {
+                dlclose(handle);
+            }
+
+            // Load newer version
+            handle = dlopen("../http.so", RTLD_NOW);
+            if(!handle)
+            {
+                perror("Failed to load shared library");
+                free(client_sockets);
+                return 1;
+            }
+
+            *(void **)(&my_func) = dlsym(handle, "my_function");
+            if(!my_func)
+            {
+                perror("dlsym failed");
+                dlclose(handle);
+                free(client_sockets);
+                return 1;
+            }
+            last_time = new_time;
+        }
+
+        fd = recv_fd(worker_sockets[i][1]);    // recv_fd from monitor
+        if(fd == -1)
+        {
+            perror("webserver: worker (recv_fd)");
+            dlclose(handle);
+            free(client_sockets);
+            return 1;
+        }
+
+        printf("Received client fd in child: %d\n", fd);
+
+        // Get client address
+        sockn = getsockname(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addrlen);
+        if(sockn < 0)
+        {
+            perror("webserver (getsockname)");
+            continue;
+        }
+        // handle_client()
+        printf("handling client...\n");
+        handle_result = handle_client(client_addr, fd, handle);
+        if(handle_result == 1)
+        {
+            // todo: kill this process ?
+            printf("Dlsym failed in a child worker\n");
+        }
+
+        // sendmsg: send the fd back to the monitor
+        send_fd(worker_sockets[i][1], fd);
+        printf("sent client fd back to monitor: %d\n", fd);
+        close(fd);
+    }
+    return 0;
+}
+
+static void clean_up_worker_sockets(int **worker_sockets)
+{
+    for(int i = 0; i < CHILDREN; i++)
+    {
+        close(worker_sockets[i][0]);
+        close(worker_sockets[i][1]);
+        free(worker_sockets[i]);
+    }
+    free((void *)worker_sockets);
 }
