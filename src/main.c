@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <ndbm.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,14 +25,26 @@
 #define BUFFER_SIZE 1024
 #define CHILDREN 3
 #define TIME_SIZE 20
+#define FOUR 4
+#define FIVE 5
+
+#ifdef __APPLE__
+typedef size_t datum_size;
+    #define DPT_CAST(ptr) ((char *)(ptr))
+#else
+typedef int datum_size;
+    #define DPT_CAST(ptr) (ptr)
+#endif
 
 static void setup_signal_handler(void);
 static void sigint_handler(int signum);
 static int  handle_client(struct sockaddr_in client_addr, int client_fd, void *handle);
+static int  handle_post(const char *buffer);
 int         recv_fd(int socket);
 int         send_fd(int socket, int fd);
 time_t      get_last_modified_time(const char *path);
 void        format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
+static void safe_dbm_fetch(DBM *db, datum key, datum *result);
 
 // this variable should not be moved to a .h file
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -518,6 +531,7 @@ static int handle_client(struct sockaddr_in client_addr, int client_fd, void *ha
     ssize_t valread;
     printf("[%s:%u]\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
+    // Read client request
     valread = read(client_fd, buffer, BUFFER_SIZE);
     if(valread < 0)
     {
@@ -525,6 +539,15 @@ static int handle_client(struct sockaddr_in client_addr, int client_fd, void *ha
         return 1;
     }
 
+    // Detect HTTP Method
+    if(strncmp(buffer, "POST ", FIVE) == 0)
+    {
+        printf("POST request received...\n");
+        handle_post(buffer);
+    }
+    // TODO: handle other requests
+
+    // Retrieve function from shared library
     printf("retrieving func from shared library\n\n");
     // retrieving symbol (the function name in the lib is my_function)
     *(void **)(&my_func) = dlsym(handle, "my_function");
@@ -535,12 +558,73 @@ static int handle_client(struct sockaddr_in client_addr, int client_fd, void *ha
         return 1;
     }
 
+    // Process and send HTTP response
     printf("calling func %p\n", *(void **)(&my_func));
     // test function from shared library
     my_func(buffer);
     printf("\n");
     send(client_fd, http_response, strlen(http_response), 0);
 
+    return 0;
+}
+
+// Stores POST request data into an NDBM database
+static int handle_post(const char *buffer)
+{
+    DBM  *db;
+    datum key;
+    datum value;
+    datum fetched_value;
+    char  db_name[] = "requests_db";    // cppcheck-suppress constVariable
+    char  key_str[] = "post_data";
+
+    // Extract POST body
+    char *body = strstr(buffer, "\r\n\r\n");
+    if(body)
+    {
+        body += FOUR;
+        printf("POST data received: %s\n", body);
+    }
+    else
+    {
+        printf("No POST data found\n");
+        return 1;
+    }
+
+    // Open database (or create it if it doesn't exist)
+    db = dbm_open(db_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if(!db)
+    {
+        perror("dbm_open");
+        return 1;
+    }
+
+    // Store POST data into database
+    key.dptr    = key_str;
+    key.dsize   = (datum_size)strlen((const char *)key.dptr) + 1;
+    value.dptr  = body;
+    value.dsize = (datum_size)strlen((const char *)value.dptr) + 1;
+
+    if(dbm_store(db, key, value, DBM_REPLACE) != 0)
+    {
+        perror("dbm_store");
+        dbm_close(db);
+        return 1;
+    }
+
+    // Verify that data was stored in DB
+    safe_dbm_fetch(db, key, &fetched_value);
+    if(fetched_value.dptr)
+    {
+        printf("Stored POST data: %s\n", DPT_CAST(fetched_value.dptr));
+    }
+    else
+    {
+        printf("Key not found\n");
+    }
+
+    // Close database
+    dbm_close(db);
     return 0;
 }
 
@@ -637,4 +721,15 @@ void format_timestamp(time_t timestamp, char *buffer, size_t buffer_size)
     {
         perror("Unknown time");
     }
+}
+
+static void safe_dbm_fetch(DBM *db, datum key, datum *result)
+{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waggregate-return"
+    datum temp = dbm_fetch(db, key);
+#pragma GCC diagnostic pop
+
+    result->dptr  = temp.dptr;
+    result->dsize = temp.dsize;
 }
