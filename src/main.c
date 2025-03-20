@@ -209,6 +209,7 @@ int main(int arg, const char *argv[])
                     // Send the FD to a worker (Round-robin or first available)
                     send_fd(worker_sockets[worker_index][0], client_fd_monitor);
                     printf("Monitor sent client FD %d to worker %d\n", client_fd_monitor, worker_index);
+                    close(client_fd_monitor);
                     worker_index++;
                     if(worker_index == CHILDREN)
                     {
