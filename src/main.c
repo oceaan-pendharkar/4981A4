@@ -36,18 +36,18 @@ typedef int datum_size;
     #define DPT_CAST(ptr) (ptr)
 #endif
 
-static void setup_signal_handler(void);
-static void sigint_handler(int signum);
-static int  handle_client(struct sockaddr_in client_addr, int client_fd, void *handle);
-static int  handle_post(const char *buffer);
-int         recv_fd(int socket);
-int         send_fd(int socket, int fd);
-time_t      get_last_modified_time(const char *path);
-void        format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
-static void safe_dbm_fetch(DBM *db, datum key, datum *result);
-static int  worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets);
-static void check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[]);
-static void clean_up_worker_sockets(int **worker_sockets);
+static void   setup_signal_handler(void);
+static void   sigint_handler(int signum);
+static int    handle_client(struct sockaddr_in client_addr, int client_fd, void *handle);
+static int    handle_post(const char *buffer);
+static int    recv_fd(int socket);
+static int    send_fd(int socket, int fd);
+static time_t get_last_modified_time(const char *path);
+static void   format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
+static void   safe_dbm_fetch(DBM *db, datum key, datum *result);
+static int    worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets);
+static void   check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[]);
+static void   clean_up_worker_sockets(int **worker_sockets);
 
 // this variable should not be moved to a .h file
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -69,9 +69,19 @@ int main(int arg, const char *argv[])
     int                server_fd;
     time_t             last_modified;
     char               time_str[TIME_SIZE];
+    char               cwd[BUFFER_SIZE];
+
+    if(getcwd(cwd, sizeof(cwd)) != NULL)
+    {
+        printf("Current working directory: %s\n", cwd);
+    }
+    else
+    {
+        perror("getcwd() error");
+    }
 
     // initialize shared library
-    handle = dlopen("../http.so", RTLD_NOW);
+    handle = dlopen("./http.so", RTLD_NOW);
     if(!handle)
     {
         free((void *)client_sockets);
@@ -80,7 +90,7 @@ int main(int arg, const char *argv[])
     }
 
     // Grab last modified time of http.so
-    last_modified = get_last_modified_time("../http.so");
+    last_modified = get_last_modified_time("./http.so");
     format_timestamp(last_modified, time_str, sizeof(time_str));     // Convert to human readable
     printf("http.so last modified time on init: %s\n", time_str);    // Testing
 
@@ -152,7 +162,7 @@ int main(int arg, const char *argv[])
             if(pid == 0)
             {
                 // Get last time http.so was modified
-                time_t last_time = get_last_modified_time("../http.so");
+                time_t last_time = get_last_modified_time("./http.so");
 
                 int result = worker_loop(last_time, handle, i, client_sockets, worker_sockets);
                 if(result != 0)
@@ -627,6 +637,7 @@ time_t get_last_modified_time(const char *path)
         return attr.st_mtime;
     }
 
+    fprintf(stderr, "stat() failed for %s: %s\n", path, strerror(errno));
     // If stat fails, return 0
     return 0;
 }
@@ -728,7 +739,7 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
         memset(&client_addr, 0, sizeof(client_addr));
 
         // Check if http.so has been updated
-        new_time = get_last_modified_time("../http.so");
+        new_time = get_last_modified_time("./http.so");
 
         // Testing
         format_timestamp(last_time, last_time_str, sizeof(last_time_str));
@@ -747,7 +758,7 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
             }
 
             // Load newer version
-            handle = dlopen("../http.so", RTLD_NOW);
+            handle = dlopen("./http.so", RTLD_NOW);
             if(!handle)
             {
                 perror("Failed to load shared library");
