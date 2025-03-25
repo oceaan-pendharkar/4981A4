@@ -477,7 +477,14 @@ static int handle_client(struct sockaddr_in client_addr, int client_fd, void *ha
         printf("POST request received...\n");
         handle_post(buffer);
     }
-    // TODO: handle other requests
+    else if(strncmp(buffer, "HEAD ", FIVE) == 0)
+    {
+        printf("head request detected\n");
+    }
+    else if(strncmp(buffer, "GET ", FOUR) == 0)
+    {
+        printf("get request detected\n");
+    }
 
     // Retrieve function from shared library
     printf("retrieving func from shared library\n\n");
