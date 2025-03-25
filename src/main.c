@@ -175,7 +175,7 @@ int main(int arg, const char *argv[])
             int    max_monitor_fd = dsfd[1];
             int    monitor_activity;
 
-            FD_ZERO(&monitor_read_fds);
+            memset(&monitor_read_fds, 0, sizeof(monitor_read_fds));
 
             // Listen for new client FDs from server
             FD_SET(dsfd[1], &monitor_read_fds);
@@ -297,7 +297,8 @@ int main(int arg, const char *argv[])
 
         // Clear the socket set
 #ifndef __clang_analyzer__
-        FD_ZERO(&readfds);
+        memset(&readfds, 0, sizeof(readfds));
+
 #endif
 
 #if defined(__FreeBSD__) && defined(__GNUC__)
@@ -712,7 +713,7 @@ static void check_for_dead_children(time_t last_time, void *handle, int client_s
 
 static int worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets)
 {
-    while(1)
+    while(!exit_flag)
     {
         int    sockn;
         int    handle_result;
