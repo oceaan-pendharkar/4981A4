@@ -38,7 +38,7 @@ typedef int datum_size;
 
 static void   setup_signal_handler(void);
 static void   sigint_handler(int signum);
-static int    handle_client(struct sockaddr_in client_addr, int client_fd, void *handle);
+static int    handle_request(struct sockaddr_in client_addr, int client_fd, void *handle);
 static int    handle_post(const char *buffer);
 static int    recv_fd(int socket);
 static int    send_fd(int socket, int fd);
@@ -449,7 +449,7 @@ static void sigint_handler(int signum)
     exit_flag = 1;
 }
 
-static int handle_client(struct sockaddr_in client_addr, int client_fd, void *handle)
+static int handle_request(struct sockaddr_in client_addr, int client_fd, void *handle)
 {
     void (*my_func)(const char *);     // function pointer for the function from the shared lib
     char buffer[BUFFER_SIZE] = {0};    // Buffer for storing incoming data
@@ -483,7 +483,10 @@ static int handle_client(struct sockaddr_in client_addr, int client_fd, void *ha
     }
     else if(strncmp(buffer, "GET ", FOUR) == 0)
     {
+        char req_path[BUFFER_SIZE];    // Path of the requested file
         printf("get request detected\n");
+        set_request_path(req_path, buffer);
+        printf("\nrequest path generated: %s\n", req_path);
     }
 
     // Retrieve function from shared library
@@ -802,9 +805,9 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
             perror("webserver (getsockname)");
             continue;
         }
-        // handle_client()
+        // handle_request()
         printf("handling client...\n");
-        handle_result = handle_client(client_addr, fd, handle);
+        handle_result = handle_request(client_addr, fd, handle);
         if(handle_result == 1)
         {
             // todo: kill this process ?
