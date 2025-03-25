@@ -484,9 +484,19 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     else if(strncmp(buffer, "GET ", FOUR) == 0)
     {
         char req_path[BUFFER_SIZE];    // Path of the requested file
+        int  is_head = 0;
+        // TODO: check if is image
+        int     is_img = 0;
+        ssize_t valwrite;    // For write operations
+
         printf("get request detected\n");
         set_request_path(req_path, buffer);
         printf("\nrequest path generated: %s\n", req_path);
+        valwrite = handle_client(client_fd, req_path, is_head, is_img);
+        if(valwrite < 0)
+        {
+            return 1;
+        }
     }
 
     // Retrieve function from shared library
@@ -811,7 +821,7 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
         if(handle_result == 1)
         {
             // todo: kill this process ?
-            printf("Dlsym failed in a child worker\n");
+            printf("handle request failed in a child worker\n");
         }
 
         // sendmsg: send the fd back to the monitor

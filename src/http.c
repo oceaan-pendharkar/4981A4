@@ -632,7 +632,6 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
 
         printf("writing 405 content to response: %s\n", response_string);
         write_to_client(newsockfd, response_string);    // Send 405 response
-        close(newsockfd);                               // Close the socket
         free(content_string);
         free(response_string);
         return 0;
@@ -678,7 +677,6 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
         strncat(response_string, content_type_line, strlen(content_type_line) + 1);
         append_content_length_msg(response_string, length);
         write_to_client(newsockfd, response_string);    // Send 400 response
-        close(newsockfd);                               // Close the socket
         free(content_string);
         free(response_string);
         return -1;
@@ -755,7 +753,6 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
     free(content_string);
     result = write_to_client(newsockfd, response_string);
     free(response_string);
-    close(newsockfd);
 
     // write to client
     return result;
