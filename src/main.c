@@ -48,6 +48,7 @@ static void   safe_dbm_fetch(DBM *db, datum key, datum *result);
 static int    worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets);
 static void   check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[]);
 static void   clean_up_worker_sockets(int **worker_sockets);
+static int    call_handle_client(int (*handle_c)(int, const char *, int, int), void *handle, int client_fd, char *req_path, int is_head, int is_img);
 
 // this variable should not be moved to a .h file
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -451,8 +452,8 @@ static void sigint_handler(int signum)
 
 static int handle_request(struct sockaddr_in client_addr, int client_fd, void *handle)
 {
-    int (*handle_c)(int, const char *, int, int);    // function pointer for handle_client
-    char buffer[BUFFER_SIZE] = {0};                  // Buffer for storing incoming data
+    int (*handle_c)(int, const char *, int, int) = NULL;    // function pointer for handle_client
+    char buffer[BUFFER_SIZE]                     = {0};     // Buffer for storing incoming data
 
     ssize_t valread;
     printf("[%s:%u]\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
@@ -473,39 +474,29 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     }
     else if(strncmp(buffer, "HEAD ", FIVE) == 0)
     {
+        char req_path[BUFFER_SIZE];    // Path of the requested file
+        int  is_head = 0;              // says it IS a head request if  == 0
+        int  is_img  = -1;
+
         printf("head request detected\n");
+        set_request_path(req_path, buffer);
+        printf("request path generated: %s\n", req_path);
+
+        return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
     else if(strncmp(buffer, "GET ", FOUR) == 0)
     {
         char req_path[BUFFER_SIZE];    // Path of the requested file
         int  is_head = -1;
         // TODO: check if is image
-        int     is_img = -1;
-        ssize_t valwrite;    // For write operations
+        int is_img = -1;
 
         printf("get request detected\n");
+        // TODO: use the function from the shared library for set_request_path (create another handle)
         set_request_path(req_path, buffer);
         printf("\nrequest path generated: %s\n", req_path);
 
-        // Retrieve function from shared library
-        printf("retrieving func from shared library\n\n");
-        // retrieving symbol (the function name in the lib is my_function)
-        *(void **)(&handle_c) = dlsym(handle, "handle_client");
-        if(!handle_c)
-        {
-            fprintf(stderr, "dlsym failed: %s\n", dlerror());
-            dlclose(handle);
-            return 1;
-        }
-
-        // Process and send HTTP response
-        printf("calling func %p\n", *(void **)(&handle_c));
-        printf("\n");
-        valwrite = handle_c(client_fd, req_path, is_head, is_img);
-        if(valwrite < 0)
-        {
-            return 1;
-        }
+        return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
 
     return 0;
@@ -832,4 +823,29 @@ static void clean_up_worker_sockets(int **worker_sockets)
         free(worker_sockets[i]);
     }
     free((void *)worker_sockets);
+}
+
+static int call_handle_client(int (*handle_c)(int, const char *, int, int), void *handle, int client_fd, char *req_path, int is_head, int is_img)
+{
+    ssize_t valwrite;
+    // Retrieve function from shared library
+    printf("retrieving func from shared library\n\n");
+    // retrieving symbol (the function name in the lib is my_function)
+    *(void **)(&handle_c) = dlsym(handle, "handle_client");
+    if(!handle_c)
+    {
+        fprintf(stderr, "dlsym failed: %s\n", dlerror());
+        dlclose(handle);
+        return 1;
+    }
+
+    // Process and send HTTP response
+    printf("calling func %p\n", *(void **)(&handle_c));
+    printf("\n");
+    valwrite = handle_c(client_fd, req_path, is_head, is_img);
+    if(valwrite < 0)
+    {
+        return 1;
+    }
+    return 0;
 }
