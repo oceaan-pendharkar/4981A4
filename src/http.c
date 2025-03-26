@@ -751,6 +751,8 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
 
     // free allocated memory for the body
     free(content_string);
+
+    printf("\n\n\n newsockfd: %d response_string: %s\n", newsockfd, response_string);
     result = write_to_client(newsockfd, response_string);
     free(response_string);
 

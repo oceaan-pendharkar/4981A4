@@ -454,11 +454,11 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     void (*my_func)(const char *);     // function pointer for the function from the shared lib
     char buffer[BUFFER_SIZE] = {0};    // Buffer for storing incoming data
 
-    const char *http_response = "HTTP/1.1 200 OK\r\n"
-                                "Content-Type: text/plain\r\n"
-                                "Content-Length: 13\r\n"
-                                "\r\n"
-                                "Hello, world!";
+    //    const char *http_response = "HTTP/1.1 200 OK\r\n"
+    //    "Content-Type: text/plain\r\n"
+    //    "Content-Length: 13\r\n"
+    //    "\r\n"
+    //    "Hello, world!";
 
     ssize_t valread;
     printf("[%s:%u]\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
@@ -484,9 +484,9 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     else if(strncmp(buffer, "GET ", FOUR) == 0)
     {
         char req_path[BUFFER_SIZE];    // Path of the requested file
-        int  is_head = 0;
+        int  is_head = -1;
         // TODO: check if is image
-        int     is_img = 0;
+        int     is_img = -1;
         ssize_t valwrite;    // For write operations
 
         printf("get request detected\n");
@@ -513,9 +513,9 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     // Process and send HTTP response
     printf("calling func %p\n", *(void **)(&my_func));
     // test function from shared library
-    my_func(buffer);
+    //    my_func(buffer);
     printf("\n");
-    send(client_fd, http_response, strlen(http_response), 0);
+    //    send(client_fd, http_response, strlen(http_response), 0);
 
     return 0;
 }
