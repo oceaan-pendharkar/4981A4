@@ -451,14 +451,8 @@ static void sigint_handler(int signum)
 
 static int handle_request(struct sockaddr_in client_addr, int client_fd, void *handle)
 {
-    void (*my_func)(const char *);     // function pointer for the function from the shared lib
-    char buffer[BUFFER_SIZE] = {0};    // Buffer for storing incoming data
-
-    //    const char *http_response = "HTTP/1.1 200 OK\r\n"
-    //    "Content-Type: text/plain\r\n"
-    //    "Content-Length: 13\r\n"
-    //    "\r\n"
-    //    "Hello, world!";
+    int (*handle_c)(int, const char *, int, int);    // function pointer for handle_client
+    char buffer[BUFFER_SIZE] = {0};                  // Buffer for storing incoming data
 
     ssize_t valread;
     printf("[%s:%u]\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
@@ -492,30 +486,27 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         printf("get request detected\n");
         set_request_path(req_path, buffer);
         printf("\nrequest path generated: %s\n", req_path);
-        valwrite = handle_client(client_fd, req_path, is_head, is_img);
+
+        // Retrieve function from shared library
+        printf("retrieving func from shared library\n\n");
+        // retrieving symbol (the function name in the lib is my_function)
+        *(void **)(&handle_c) = dlsym(handle, "handle_client");
+        if(!handle_c)
+        {
+            fprintf(stderr, "dlsym failed: %s\n", dlerror());
+            dlclose(handle);
+            return 1;
+        }
+
+        // Process and send HTTP response
+        printf("calling func %p\n", *(void **)(&handle_c));
+        printf("\n");
+        valwrite = handle_c(client_fd, req_path, is_head, is_img);
         if(valwrite < 0)
         {
             return 1;
         }
     }
-
-    // Retrieve function from shared library
-    printf("retrieving func from shared library\n\n");
-    // retrieving symbol (the function name in the lib is my_function)
-    *(void **)(&my_func) = dlsym(handle, "my_function");
-    if(!my_func)
-    {
-        fprintf(stderr, "dlsym failed: %s\n", dlerror());
-        dlclose(handle);
-        return 1;
-    }
-
-    // Process and send HTTP response
-    printf("calling func %p\n", *(void **)(&my_func));
-    // test function from shared library
-    //    my_func(buffer);
-    printf("\n");
-    //    send(client_fd, http_response, strlen(http_response), 0);
 
     return 0;
 }
