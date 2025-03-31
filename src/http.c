@@ -369,9 +369,9 @@ void int_to_string(char *string, unsigned long n)
     {
         buffer[digits++] = (char)((i % TEN) + '0');
         i                = i / TEN;
-        printf("%lu\n", i);
+        //        printf("%lu\n", i);
     }
-    printf("digits: %d\n", digits);
+    //    printf("digits: %d\n", digits);
 
     // Reverse the order of the digits in the buffer
     for(int j = 0; j < digits; j++)
@@ -396,7 +396,7 @@ void append_content_length_msg(char *response_string, unsigned long length)
 
     // Convert the length value to a string and store it in content_len_buffer
     int_to_string(content_len_buffer, length);
-    printf("content length: %s\n", content_len_buffer);
+    //    printf("content length: %s\n", content_len_buffer);
 
     // Append the length
     strncat(content_length_msg, content_len_buffer, strlen(content_len_buffer));
@@ -404,13 +404,13 @@ void append_content_length_msg(char *response_string, unsigned long length)
     // Append a trailing CRLF sequence
     strncat(content_length_msg, "\r\n\r\n", CONTENT_TERM_LEN);
 
-    printf("content_length_msg: %s\n", content_length_msg);
-    printf("length: %lu\n", length);
+    //    printf("content_length_msg: %s\n", content_length_msg);
+    //    printf("length: %lu\n", length);
 
     // Append the content-length header
     strncat(response_string, content_length_msg, strlen(content_length_msg) + 1);
 
-    printf("response string: %s\n", response_string);
+    //    printf("response string: %s\n", response_string);
 }
 
 /*
@@ -445,6 +445,8 @@ int write_to_client(int newsockfd, const char *response_string)
 {
     ssize_t valwrite;
     valwrite = write(newsockfd, response_string, strlen(response_string));
+    printf("valwrite: %zd\n", valwrite);
+    fflush(stdout);
     if(valwrite < 0)
     {
         perror("webserver (write)");
@@ -517,6 +519,7 @@ int write_to_content_binary(int fd, const char *file_path)
     // If file could not be opened, serve the 404 error page (returning -2 signals this)
     if(file_fd == -1)
     {
+        printf("file fd could not be opened for binary file\n");
         return -2;
     }
 
@@ -560,8 +563,8 @@ int write_to_content_binary(int fd, const char *file_path)
 
     // Close the file descriptors and free dynamic memory
     close(file_fd);
-    close(fd);
     free(buffer);
+    printf("Succesfully wrote binary file to client\n");
     return retval;    // Success
 }
 
@@ -684,7 +687,8 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
     // if it's an image we write directly to the socket
     if(is_img == 0 && is_head == -1)
     {
-        int retval = 0;
+        int retval   = 0;
+        int writeval = 0;
         printf("it's an image!!!\n");
         response_length = strlen(HTTP_OK) + strlen(content_type_line) + CONTENT_LEN_BUF + length;
         response_string = (char *)malloc(sizeof(char) * (response_length + 1));
@@ -698,14 +702,16 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
         append_msg_to_response_string(response_string, HTTP_OK);
         strncat(response_string, content_type_line, strlen(content_type_line) + 1);
         append_content_length_msg(response_string, length);
-
-        if(write_to_client(newsockfd, response_string) < 0)
+        printf("newsockfd: %d\n", newsockfd);
+        writeval = write_to_client(newsockfd, response_string);
+        printf("writeval: %d\n", writeval);
+        if(writeval < 0)
         {
             perror("Error writing to client");
             retval = -1;
             goto cleanup;
         }
-
+        printf("writing to content binary\n");
         if(write_to_content_binary(newsockfd, request_path) < 0)
         {
             perror("Error writing content to client");
@@ -758,4 +764,40 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
 
     // write to client
     return result;
+}
+
+/*
+    Checks if the HTTP request is for an image
+
+    @param
+    buffer: The full HTTP request header
+
+    @return
+    0: The request target is an image
+    -1: The request target is not an image
+ */
+int is_img_request(const char *buffer)
+{
+    int  i = 0;
+    char c = buffer[i];
+
+    // Traverse until the first '.'
+    while(c != '.' && c != '\0' && i < BUFFER_SIZE)
+    {
+        c = buffer[++i];
+    }
+
+    // If no '.' was found, it's not an image request
+    if(c != '.')
+    {
+        return -1;
+    }
+
+    // Check the next few characters to identify the file extension
+    if(strncmp(&buffer[i], ".jpg", FILE_EXT_LEN - 1) == 0 || strncmp(&buffer[i], ".jpeg", FILE_EXT_LEN) == 0 || strncmp(&buffer[i], ".png", FILE_EXT_LEN - 1) == 0 || strncmp(&buffer[i], ".gif", FILE_EXT_LEN - 1) == 0)
+    {
+        return 0;
+    }
+
+    return -1;
 }

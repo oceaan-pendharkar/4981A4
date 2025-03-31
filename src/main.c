@@ -301,14 +301,9 @@ int main(int arg, const char *argv[])
     }
     printf("Server listening for connections\n\n");
 
-    printf("entering loop\n\n");
-    while(!exit_flag)
-    {
-        int activity;    // Number of ready file descriptors
-
-        // Clear the socket set
+    // Clear the socket set
 #ifndef __clang_analyzer__
-        memset(&readfds, 0, sizeof(readfds));
+    memset(&readfds, 0, sizeof(readfds));
 
 #endif
 
@@ -316,14 +311,20 @@ int main(int arg, const char *argv[])
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wsign-conversion"
 #endif
-        // Add the server socket to the set
-        FD_SET(server_fd, &readfds);
-        // Add the domain socket to the set (for when worker is done with client fd and sends it back)
-        FD_SET(dsfd[0], &readfds);
+    // Add the server socket to the set
+    FD_SET(server_fd, &readfds);
+    // Add the domain socket to the set (for when worker is done with client fd and sends it back)
+    FD_SET(dsfd[0], &readfds);
 #if defined(__FreeBSD__) && defined(__GNUC__)
     #pragma GCC diagnostic pop
 #endif
-        max_fd = server_fd;
+    max_fd = server_fd;
+
+    printf("entering loop\n\n");
+    while(!exit_flag)
+    {
+        int activity;    // Number of ready file descriptors
+
         printf("adding client sockets\n");
         // Add the client sockets to the set
         for(size_t i = 0; i < max_clients; i++)
@@ -393,20 +394,44 @@ int main(int arg, const char *argv[])
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wsign-conversion"
 #endif
-            FD_CLR(sd, &readfds);    // Remove the closed socket from the set
+            FD_CLR(newsockfd, &readfds);    // Remove the closed socket from the set
 #if defined(__FreeBSD__) && defined(__GNUC__)
     #pragma GCC diagnostic pop
 #endif
-            client_sockets[max_clients - 1] = 0;
+            client_sockets[max_clients - 1] = -1;
         }
 
         if(FD_ISSET(dsfd[0], &readfds))
         {
             int fd_from_monitor;
+            int added = 0;
+
             printf("received fd from monitor on domain socket\n");
             fd_from_monitor = recv_fd(dsfd[0]);
             printf("received fd from monitor: %d\n", fd_from_monitor);
-            close(fd_from_monitor);
+
+            // ✅ Add the FD back to readfds after getting it from the worker
+            FD_SET(fd_from_monitor, &readfds);
+            if(fd_from_monitor > max_fd)
+            {
+                max_fd = fd_from_monitor;
+            }
+
+            // ✅ Optionally, add it back to client_sockets if you're tracking them
+            for(size_t i = 0; i < max_clients; i++)
+            {
+                if(client_sockets[i] <= 0)
+                {
+                    client_sockets[i] = fd_from_monitor;
+                    added             = 1;
+                    break;
+                }
+            }
+            if(!added)
+            {
+                printf("No space in client_sockets to re-add fd %d\n", fd_from_monitor);
+            }
+            //            close(fd_from_monitor);
         }
     }
     close(server_fd);
@@ -488,8 +513,12 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     {
         char req_path[BUFFER_SIZE];    // Path of the requested file
         int  is_head = -1;
-        // TODO: check if is image
-        int is_img = -1;
+        int  is_img  = -1;
+        printf("Buffer being checked for image: %s\n", buffer);
+        if(is_img_request(buffer) == 0)
+        {
+            is_img = 0;
+        }
 
         printf("get request detected\n");
         // TODO: use the function from the shared library for set_request_path (create another handle)
@@ -805,7 +834,7 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
             // todo: kill this process ?
             printf("handle request failed in a child worker\n");
         }
-
+        printf("fd before sending back to monitor: %d\n", fd);
         // sendmsg: send the fd back to the monitor
         send_fd(worker_sockets[i][1], fd);
         printf("sent client fd back to monitor: %d\n", fd);

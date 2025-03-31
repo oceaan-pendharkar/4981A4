@@ -15,5 +15,6 @@ void int_to_string(char *string, unsigned long n);
 void append_body(char *response_string, const char *content_string, unsigned long length);
 int  write_to_client(int newsockfd, const char *response_string);
 int  write_to_content_binary(int fd, const char *file_path);
+int  is_img_request(const char *buffer);
 
 #endif
