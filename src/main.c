@@ -410,14 +410,14 @@ int main(int arg, const char *argv[])
             fd_from_monitor = recv_fd(dsfd[0]);
             printf("received fd from monitor: %d\n", fd_from_monitor);
 
-            // ✅ Add the FD back to readfds after getting it from the worker
+            // Add the FD back to readfds after getting it from the worker
             FD_SET(fd_from_monitor, &readfds);
             if(fd_from_monitor > max_fd)
             {
                 max_fd = fd_from_monitor;
             }
 
-            // ✅ Optionally, add it back to client_sockets if you're tracking them
+            // Add it back to client_sockets
             for(size_t i = 0; i < max_clients; i++)
             {
                 if(client_sockets[i] <= 0)
@@ -431,7 +431,6 @@ int main(int arg, const char *argv[])
             {
                 printf("No space in client_sockets to re-add fd %d\n", fd_from_monitor);
             }
-            //            close(fd_from_monitor);
         }
     }
     close(server_fd);
