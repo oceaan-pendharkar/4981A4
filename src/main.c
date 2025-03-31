@@ -49,6 +49,7 @@ static int    worker_loop(time_t last_time, void *handle, int i, int client_sock
 static void   check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[]);
 static void   clean_up_worker_sockets(int **worker_sockets);
 static int    call_handle_client(int (*handle_c)(int, const char *, int, int), void *handle, int client_fd, char *req_path, int is_head, int is_img);
+static int    call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer);
 
 // this variable should not be moved to a .h file
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -476,8 +477,9 @@ static void sigint_handler(int signum)
 
 static int handle_request(struct sockaddr_in client_addr, int client_fd, void *handle)
 {
-    int (*handle_c)(int, const char *, int, int) = NULL;    // function pointer for handle_client
-    char buffer[BUFFER_SIZE]                     = {0};     // Buffer for storing incoming data
+    int (*handle_c)(int, const char *, int, int)     = NULL;    // function pointer for handle_client
+    void (*set_req_path)(const char *, const char *) = NULL;    // function pointer for set_request_path
+    char buffer[BUFFER_SIZE]                         = {0};     // Buffer for storing incoming data
 
     ssize_t valread;
     printf("[%s:%u]\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
@@ -494,6 +496,7 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     if(strncmp(buffer, "POST ", FIVE) == 0)
     {
         printf("POST request received...\n");
+        //TODO: should be moved to shared lib
         handle_post(buffer);
     }
     else if(strncmp(buffer, "HEAD ", FIVE) == 0)
@@ -503,7 +506,7 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         int  is_img  = -1;
 
         printf("head request detected\n");
-        set_request_path(req_path, buffer);
+        call_set_request_path(set_req_path, handle, req_path, buffer);
         printf("request path generated: %s\n", req_path);
 
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
@@ -513,6 +516,8 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         char req_path[BUFFER_SIZE];    // Path of the requested file
         int  is_head = -1;
         int  is_img  = -1;
+        int  retval  = 0;
+
         printf("Buffer being checked for image: %s\n", buffer);
         if(is_img_request(buffer) == 0)
         {
@@ -520,8 +525,13 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         }
 
         printf("get request detected\n");
-        // TODO: use the function from the shared library for set_request_path (create another handle)
-        set_request_path(req_path, buffer);
+        retval = call_set_request_path(set_req_path, handle, req_path, buffer);
+        if(retval == 1)
+        {
+            printf("could not call set request path from library\n");
+            return 1;
+        }
+
         printf("\nrequest path generated: %s\n", req_path);
 
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
@@ -875,5 +885,24 @@ static int call_handle_client(int (*handle_c)(int, const char *, int, int), void
     {
         return 1;
     }
+    return 0;
+}
+
+static int call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer)
+{
+    // Retrieve function from shared library
+    //    printf("retrieving func from shared library\n\n");
+    // retrieving symbol (the function name in the lib is my_function)
+    *(void **)(&set_req_path) = dlsym(handle, "set_request_path");
+    if(!set_req_path)
+    {
+        fprintf(stderr, "dlsym failed: %s\n", dlerror());
+        dlclose(handle);
+        return 1;
+    }
+
+    printf("calling func set_request_path from shared lib %p\n", *(void **)(&set_req_path));
+    printf("\n");
+    set_req_path(req_path, buffer);
     return 0;
 }
