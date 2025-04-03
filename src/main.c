@@ -53,7 +53,7 @@ static void           check_for_dead_children(time_t last_time, void *handle, in
 static void           clean_up_worker_sockets(int **worker_sockets, int children);
 static int            call_handle_client(int (*handle_c)(int, const char *, int, int), void *handle, int client_fd, char *req_path, int is_head, int is_img);
 static int            call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer);
-static int            call_is_http(void (*is_http)(const char *), void *handle, char *buffer);
+static int            call_is_http(int (*is_http)(const char *), void *handle, char *buffer);
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message);
 int                   parse_positive_int(const char *binary_name, const char *str);
 static void           handle_arguments(const char *binary_name, const char *children_str, int *children);
@@ -514,11 +514,12 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
 {
     int (*handle_c)(int, const char *, int, int)     = NULL;    // function pointer for handle_client
     void (*set_req_path)(const char *, const char *) = NULL;    // function pointer for set_request_path
-    void (*is_http_req)(const char *)                = NULL;    // function pointer for set_request_path
+    int (*is_http_req)(const char *)                 = NULL;    // function pointer for set_request_path
 
     char buffer[BUFFER_SIZE] = {0};    // Buffer for storing incoming data
     int  is_http;
     char req_path[BUFFER_SIZE];    // Path of the requested file
+    int  retval;
 
     ssize_t valread;
     printf("[%s:%u]\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
@@ -537,18 +538,17 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         printf("gets 400 file path and isn't proper http request\n");
         strncpy(req_path, "/400.txt", LEN_405);
         req_path[TEN] = '\0';
+        return call_handle_client(handle_c, handle, client_fd, req_path, -1, -1);
     }
-    else
-    {
-        int retval = call_set_request_path(set_req_path, handle, req_path, buffer);
-        if(retval == 1)
-        {
-            printf("could not call set request path from library\n");
-            return 1;
-        }
 
-        printf("\nrequest path generated: %s\n", req_path);
+    retval = call_set_request_path(set_req_path, handle, req_path, buffer);
+    if(retval == 1)
+    {
+        printf("could not call set request path from library\n");
+        return 1;
     }
+
+    printf("\nrequest path generated: %s\n", req_path);
 
     // Detect HTTP Method
     if(strncmp(buffer, "POST ", FIVE) == 0)
@@ -960,7 +960,7 @@ static int call_set_request_path(void (*set_req_path)(const char *, const char *
     return 0;
 }
 
-static int call_is_http(void (*is_http)(const char *), void *handle, char *buffer)
+static int call_is_http(int (*is_http)(const char *), void *handle, char *buffer)
 {
     // Retrieve function from shared library
     //    printf("retrieving func from shared library\n\n");
@@ -975,8 +975,7 @@ static int call_is_http(void (*is_http)(const char *), void *handle, char *buffe
 
     printf("calling func set_request_path from shared lib %p\n", *(void **)(&is_http));
     printf("\n");
-    is_http(buffer);
-    return 0;
+    return is_http(buffer);
 }
 
 static void parse_arguments(int argc, char *argv[], char **children)

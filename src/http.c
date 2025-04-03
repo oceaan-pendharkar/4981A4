@@ -818,10 +818,13 @@ int is_http_request(const char *buffer)
 
     set_request_method(req_header, buffer);
 
+    printf("_______---________\n\n\nreq_header inside is_http_request: %s\n\n\n", req_header);
+
     // Check if the method in req_header is a valid HTTP method
     if(strcmp(req_header, "GET") != 0 && strcmp(req_header, "HEAD") != 0 && strcmp(req_header, "POST") != 0 && strcmp(req_header, "PUT") != 0 && strcmp(req_header, "DELETE") != 0 && strcmp(req_header, "CONNECT") != 0 && strcmp(req_header, "OPTIONS") != 0 &&
        strcmp(req_header, "TRACE") != 0 && strcmp(req_header, "PATCH") != 0)
     {
+        printf("\n\n\n-------RETURNING -1------\n\n\n");
         return -1;
     }
 
