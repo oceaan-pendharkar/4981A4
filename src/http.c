@@ -21,14 +21,12 @@
 #define PNG_CONTENT_TYPE "Content-Type: image/png\r\n"
 #define GIF_CONTENT_TYPE "Content-Type: image/gif\r\n"
 
-// #define REQ_HEADER_LEN 8
 // #define PATH_LEN 1024
 #define CONTENT_LEN_BUF 100
 #define CONTENT_TERM_LEN 5
-#define TEN 10
-// #define LEN_405 9
 #define FILE_EXT_LEN 5
 #define SIZE_404_MSG 20
+
 #define INDEX_FILE_PATH "/index.html"
 
 // don't need html because it's the default
@@ -799,4 +797,216 @@ int is_img_request(const char *buffer)
     }
 
     return -1;
+}
+
+/*
+    Checks if the header contains a valid HTTP request method, the first line is valid, and the headers are valid
+
+    @param
+    req_header: The HTTP request method
+    buffer: The full HTTP request header
+
+    @return
+    0: The buffer contains a valid HTTP request
+    -1: The buffer does not contain a valid HTTP request
+ */
+int is_http_request(const char *buffer)
+{
+    int  valid_firstline = 0;
+    int  valid_headers   = 0;
+    char req_header[REQ_HEADER_LEN + 1];
+
+    set_request_method(req_header, buffer);
+
+    // Check if the method in req_header is a valid HTTP method
+    if(strcmp(req_header, "GET") != 0 && strcmp(req_header, "HEAD") != 0 && strcmp(req_header, "POST") != 0 && strcmp(req_header, "PUT") != 0 && strcmp(req_header, "DELETE") != 0 && strcmp(req_header, "CONNECT") != 0 && strcmp(req_header, "OPTIONS") != 0 &&
+       strcmp(req_header, "TRACE") != 0 && strcmp(req_header, "PATCH") != 0)
+    {
+        return -1;
+    }
+
+    // Check if the first line is valid
+    valid_firstline = has_valid_first_line(buffer);
+
+    // Check if the headers are valid
+    valid_headers = has_valid_headers(buffer);
+    if(valid_firstline == -1 || valid_headers == -1)
+    {
+        return -1;
+    }
+    return 0;
+}
+
+/*
+    Checks if the request has a valid first line like METHOD URI HTTP/x{x}\r\n
+    This function assumes the HTTP method has already been validated
+
+    @param
+    buffer: The buffer containing the HTTP request
+
+    @return
+    0: The request has a valid first line
+    -1: The request is invalid
+ */
+int has_valid_first_line(const char *buffer)
+{
+    int  i = 0;
+    char c = buffer[i];
+
+    // Traverse until the first space
+    while(c != ' ' && i < BUFFER_SIZE)
+    {
+        c = buffer[++i];
+    }
+
+    // Check that there is no URI before HTTP/
+    if(i < BUFFER_SIZE - 4)
+    {
+        if(buffer[i + 1] == 'H' && buffer[i + 2] == 'T' && buffer[i + 3] == 'T' && buffer[i + 4] == 'P' && buffer[i + FILE_EXT_LEN] == '/')
+        {
+            return -1;
+        }
+    }
+
+    // Traverse until the next space, end of the uRI
+    while(c != ' ' && i < BUFFER_SIZE)
+    {
+        c = buffer[++i];
+    }
+
+    // Check that the URI does not end with a '/'
+    if(i < BUFFER_SIZE - 1 && buffer[i + 1] != '/')
+    {
+        return -1;
+    }
+
+    // Move past the URI
+    c = buffer[++i];
+
+    // Traverse until the next space
+    while(c != ' ' && i < BUFFER_SIZE)
+    {
+        c = buffer[++i];
+    }
+    i++;
+
+    // will return -1 if there is no HTTP/x{x}
+    if(buffer[i] != 'H' || buffer[i + 1] != 'T' || buffer[i + 2] != 'T' || buffer[i + 3] != 'P' || buffer[i + 4] != '/')
+    {
+        return -1;
+    }
+
+    // Traverse until '\r'
+    while(c != '\r')
+    {
+        c = buffer[++i];
+    }
+
+    // Check if the line ends with \r\n
+    if(buffer[i + 1] != '\n')
+    {
+        return -1;
+    }
+    return 0;
+}
+
+/*
+    Checks to make sure headers have colons and end in \r\n\r\n, and each ends with \r\n
+    This assumes the request line has already been validate
+
+    @param
+    buffer: Holds the entire HTTP request
+
+    @return
+    0: The headers are valid
+    -1: The headers are invalid
+ */
+int has_valid_headers(const char *buffer)
+{
+    int  i              = 0;
+    char c              = buffer[i];
+    int  final_rn_found = -1;
+
+    // go to the first \r\n (which is right before the headers)
+    while(i < BUFFER_SIZE - 1 && c != '\r')
+    {
+        c = buffer[++i];
+    }
+    c = buffer[++i];    // buffer is now \n
+
+    // Process the headers
+    while(i < BUFFER_SIZE && final_rn_found == -1)
+    {
+        // find a colon
+        while(i < BUFFER_SIZE - 1 && c != ':')
+        {
+            c = buffer[++i];
+        }
+        if(i > BUFFER_SIZE - 1)
+        {
+            return -1;
+        }
+        // make sure there is at least 1 char after the colon
+        c = buffer[i];
+
+        // find the \r\n
+        while(i < BUFFER_SIZE - 3 && c != '\r')
+        {
+            c = buffer[++i];
+        }
+        if(i > BUFFER_SIZE - 2)
+        {
+            return -1;
+        }
+        if(buffer[++i] != '\n')
+        {
+            return -1;
+        }
+        // we have already incremeted i one past the \r\n
+
+        // if we don't hit another \r we havent hit the end of the headers
+        if(buffer[++i] != '\r')
+        {
+            continue;
+        }
+
+        // check if the next characters are \r\n, marking the end of the header
+        if(buffer[i] == '\r' && buffer[i + 1] == '\n')
+        {
+            final_rn_found = 0;
+        }
+        break;
+    }
+    return final_rn_found;
+}
+
+/*
+    Extracts the HTTP method from the request header
+
+    @param
+    req_header: Where the HTTP request method will be stored
+    buffer: The full HTTP request header
+ */
+void set_request_method(char *req_header, const char *buffer)
+{
+    char c;
+    int  i = 0;
+    int  j = 0;
+
+    // Read the buffer
+    c = buffer[i];
+
+    // Copy chars from buffer to req_header until first space
+    while(c != ' ' && j < REQ_HEADER_LEN)
+    {
+        req_header[j++] = c;
+        c               = buffer[++i];
+    }
+
+    // Null-terminate req_header
+    req_header[j] = '\0';
+
+    // Debug: print the extracted request
+    printf("request path: %s\n", req_header);
+    printf("request path length: %d\n", (int)strlen(req_header));
 }
