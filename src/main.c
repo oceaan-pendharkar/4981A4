@@ -968,9 +968,9 @@ static void parse_arguments(int argc, char *argv[], char **children)
         }
     }
 
-    if(*children == NULL)
+    if(*children == NULL || *children[0] == '0')
     {
-        usage(argv[0], EXIT_FAILURE, "Error: please specify a number of children to fork");
+        usage(argv[0], EXIT_FAILURE, "Error: please specify a nonzero number of children to fork");
     }
 
     if(optind < argc - 1)

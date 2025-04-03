@@ -659,7 +659,6 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
         append_content_length_msg(response_string, length);
         append_body(response_string, *content_ptr, length);
         write_to_client(newsockfd, response_string);    // Send 404 response
-        close(newsockfd);                               // Close the socket
         free(content_string);
         free(response_string);
         return -2;
