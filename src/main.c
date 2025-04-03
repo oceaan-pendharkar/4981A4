@@ -3,6 +3,8 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <ndbm.h>
 #include <signal.h>
 #include <stdio.h>
@@ -23,10 +25,11 @@
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
-#define CHILDREN 3
+// #define children 3
 #define TIME_SIZE 20
 #define FOUR 4
 #define FIVE 5
+#define BASE_TEN 10
 
 #ifdef __APPLE__
 typedef size_t datum_size;
@@ -36,25 +39,29 @@ typedef int datum_size;
     #define DPT_CAST(ptr) (ptr)
 #endif
 
-static void   setup_signal_handler(void);
-static void   sigint_handler(int signum);
-static int    handle_request(struct sockaddr_in client_addr, int client_fd, void *handle);
-static int    handle_post(const char *buffer);
-static int    recv_fd(int socket);
-static int    send_fd(int socket, int fd);
-static time_t get_last_modified_time(const char *path);
-static void   format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
-static void   safe_dbm_fetch(DBM *db, datum key, datum *result);
-static int    worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets);
-static void   check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[]);
-static void   clean_up_worker_sockets(int **worker_sockets);
-static int    call_handle_client(int (*handle_c)(int, const char *, int, int), void *handle, int client_fd, char *req_path, int is_head, int is_img);
-static int    call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer);
+static void           setup_signal_handler(void);
+static void           sigint_handler(int signum);
+static int            handle_request(struct sockaddr_in client_addr, int client_fd, void *handle);
+static int            handle_post(const char *buffer);
+static int            recv_fd(int socket);
+static int            send_fd(int socket, int fd);
+static time_t         get_last_modified_time(const char *path);
+static void           format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
+static void           safe_dbm_fetch(DBM *db, datum key, datum *result);
+static int            worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets);
+static void           check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[], int children);
+static void           clean_up_worker_sockets(int **worker_sockets, int children);
+static int            call_handle_client(int (*handle_c)(int, const char *, int, int), void *handle, int client_fd, char *req_path, int is_head, int is_img);
+static int            call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer);
+_Noreturn static void usage(const char *program_name, int exit_code, const char *message);
+int                   parse_positive_int(const char *binary_name, const char *str);
+static void           handle_arguments(const char *binary_name, const char *children_str, int *children);
+static void           parse_arguments(int argc, char *argv[], char **children);
 
 // this variable should not be moved to a .h file
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-int main(int arg, const char *argv[])
+int main(int argc, char *argv[])
 {
     void              *handle;
     fd_set             readfds;                                        // Set of file descriptors for select
@@ -66,12 +73,14 @@ int main(int arg, const char *argv[])
     int                max_fd;                                         // Maximum file descriptor for select
     int                dsfd[2];                                        // the domain socket for server->monitor
     int              **worker_sockets;                                 // Stores UNIX socket pairs for each worker
-    pid_t              child_pids[CHILDREN] = {0};
+    pid_t             *child_pids;
     pid_t              monitor;
     int                server_fd;
     time_t             last_modified;
     char               time_str[TIME_SIZE];
     char               cwd[BUFFER_SIZE];
+    char              *children_str = NULL;
+    int                children;
 
     if(getcwd(cwd, sizeof(cwd)) != NULL)
     {
@@ -82,12 +91,23 @@ int main(int arg, const char *argv[])
         perror("getcwd() error");
     }
 
+    parse_arguments(argc, argv, &children_str);
+    handle_arguments(argv[0], children_str, &children);
+
+    child_pids = (pid_t *)malloc((size_t)children * sizeof(pid_t));
+    if(child_pids == NULL)
+    {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
     // initialize shared library
     handle = dlopen("./http.so", RTLD_NOW);
     if(!handle)
     {
         free((void *)client_sockets);
         fprintf(stderr, "dlopen failed: %s\n", dlerror());
+        free(child_pids);
         return 1;
     }
 
@@ -102,23 +122,26 @@ int main(int arg, const char *argv[])
         perror("webserver (socketpair)");
         free(client_sockets);
         dlclose(handle);
+        free(child_pids);
         return 1;
     }
 
     // create domain socket for monitor -> worker
     // this is my solution for making sure only one child gets a fd from the monitor
-    worker_sockets = (int **)malloc(sizeof(int *) * CHILDREN);
+    worker_sockets = (int **)malloc(sizeof(int *) * (size_t)children);
     if(!worker_sockets)
     {
         perror("malloc failed");
+        free(child_pids);
         exit(EXIT_FAILURE);
     }
-    for(int i = 0; i < CHILDREN; i++)
+    for(int i = 0; i < children; i++)
     {
         worker_sockets[i] = (int *)malloc(sizeof(int) * 2);
         if(!worker_sockets[i])
         {
             perror("malloc failed");
+            free(child_pids);
             exit(EXIT_FAILURE);
         }
         if(socketpair(AF_UNIX, SOCK_STREAM, 0, worker_sockets[i]) == -1)
@@ -131,6 +154,8 @@ int main(int arg, const char *argv[])
                 free(worker_sockets[j]);
             }
             free((void *)worker_sockets);
+            free(child_pids);
+
             return 1;
         }
     }
@@ -140,6 +165,7 @@ int main(int arg, const char *argv[])
     if(monitor == -1)
     {
         perror("fork");
+        free(child_pids);
         exit(EXIT_FAILURE);
     }
     if(monitor == 0)
@@ -150,7 +176,7 @@ int main(int arg, const char *argv[])
         close(dsfd[0]);
 
         // pre-fork children
-        for(int i = 0; i < CHILDREN; i++)
+        for(int i = 0; i < children; i++)
         {
             pid_t pid = fork();
             if(pid < 0)
@@ -158,7 +184,8 @@ int main(int arg, const char *argv[])
                 perror("webserver (fork)");
                 dlclose(handle);
                 free(client_sockets);
-                clean_up_worker_sockets(worker_sockets);
+                clean_up_worker_sockets(worker_sockets, children);
+                free(child_pids);
                 return 1;
             }
             if(pid == 0)
@@ -170,6 +197,7 @@ int main(int arg, const char *argv[])
                 if(result != 0)
                 {
                     perror("webserver (worker loop)");
+                    free(child_pids);
                     exit(EXIT_FAILURE);
                 }
             }
@@ -193,7 +221,7 @@ int main(int arg, const char *argv[])
             FD_SET(dsfd[1], &monitor_read_fds);
 
             // Listen for worker responses
-            for(int i = 0; i < CHILDREN; i++)
+            for(int i = 0; i < children; i++)
             {
                 FD_SET(worker_sockets[i][0], &monitor_read_fds);
                 if(worker_sockets[i][0] > max_monitor_fd)
@@ -223,7 +251,7 @@ int main(int arg, const char *argv[])
                     printf("Monitor sent client FD %d to worker %d\n", client_fd_monitor, worker_index);
                     close(client_fd_monitor);
                     worker_index++;
-                    if(worker_index == CHILDREN)
+                    if(worker_index == children)
                     {
                         worker_index = 0;
                     }
@@ -231,7 +259,7 @@ int main(int arg, const char *argv[])
             }
 
             // Receive processed FDs from workers
-            for(int i = 0; i < CHILDREN; i++)
+            for(int i = 0; i < children; i++)
             {
                 if(FD_ISSET(worker_sockets[i][0], &monitor_read_fds))
                 {
@@ -245,7 +273,7 @@ int main(int arg, const char *argv[])
                     }
                 }
             }
-            check_for_dead_children(last_modified, handle, client_sockets, worker_sockets, child_pids);
+            check_for_dead_children(last_modified, handle, client_sockets, worker_sockets, child_pids, children);
         }
     }
     // Create a TCP socket
@@ -254,12 +282,13 @@ int main(int arg, const char *argv[])
     {
         perror("webserver (socket)");
         free(client_sockets);
-        clean_up_worker_sockets(worker_sockets);
+        clean_up_worker_sockets(worker_sockets, children);
+        free(child_pids);
         return 1;
     }
 
     // (Debugging) Print program arguments
-    printf("program arg: %d\n", arg);
+    printf("program arg: %d\n", argc);
     printf("program argv[0]: %s\n", argv[0]);
 
     // Set up Signal Handler
@@ -285,7 +314,8 @@ int main(int arg, const char *argv[])
         close(server_fd);
         free(client_sockets);
         dlclose(handle);
-        clean_up_worker_sockets(worker_sockets);
+        clean_up_worker_sockets(worker_sockets, children);
+        free(child_pids);
         return 1;
     }
     printf("Socket successfully bound to address\n");
@@ -297,7 +327,8 @@ int main(int arg, const char *argv[])
         close(server_fd);
         free(client_sockets);
         dlclose(handle);
-        clean_up_worker_sockets(worker_sockets);
+        clean_up_worker_sockets(worker_sockets, children);
+        free(child_pids);
         return 1;
     }
     printf("Server listening for connections\n\n");
@@ -380,6 +411,7 @@ int main(int arg, const char *argv[])
             {
                 perror("realloc");
                 free(client_sockets);
+                free(child_pids);
                 exit(EXIT_FAILURE);
             }
             else
@@ -442,7 +474,9 @@ int main(int arg, const char *argv[])
     close(dsfd[0]);
     close(dsfd[1]);
 
-    clean_up_worker_sockets(worker_sockets);
+    clean_up_worker_sockets(worker_sockets, children);
+    free(child_pids);
+
     return EXIT_SUCCESS;
 }
 
@@ -496,7 +530,7 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     if(strncmp(buffer, "POST ", FIVE) == 0)
     {
         printf("POST request received...\n");
-        //TODO: should be moved to shared lib
+        // TODO: should be moved to shared lib
         handle_post(buffer);
     }
     else if(strncmp(buffer, "HEAD ", FIVE) == 0)
@@ -707,7 +741,7 @@ static void safe_dbm_fetch(DBM *db, datum key, datum *result)
     result->dsize = temp.dsize;
 }
 
-static void check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[])
+static void check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[], int children)
 {
     int dead_worker;
     int status;
@@ -716,7 +750,7 @@ static void check_for_dead_children(time_t last_time, void *handle, int client_s
         printf("Worker %d died, restarting...\n", dead_worker);
 
         // Find the corresponding worker index
-        for(int i = 0; i < CHILDREN; i++)
+        for(int i = 0; i < children; i++)
         {
             if(child_pids[i] == dead_worker)
             {
@@ -852,9 +886,9 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
     return 0;
 }
 
-static void clean_up_worker_sockets(int **worker_sockets)
+static void clean_up_worker_sockets(int **worker_sockets, int children)
 {
-    for(int i = 0; i < CHILDREN; i++)
+    for(int i = 0; i < children; i++)
     {
         close(worker_sockets[i][0]);
         close(worker_sockets[i][1]);
@@ -905,4 +939,89 @@ static int call_set_request_path(void (*set_req_path)(const char *, const char *
     printf("\n");
     set_req_path(req_path, buffer);
     return 0;
+}
+
+static void parse_arguments(int argc, char *argv[], char **children)
+{
+    int opt;
+
+    opterr = 0;
+
+    while((opt = getopt(argc, argv, "hc:")) != -1)
+    {
+        switch(opt)
+        {
+            case 'c':
+            {
+                *children = optarg;
+                break;
+            }
+            case 'h':
+            {
+                usage(argv[0], EXIT_SUCCESS, NULL);
+            }
+
+            default:
+            {
+                usage(argv[0], EXIT_FAILURE, NULL);
+            }
+        }
+    }
+
+    if(*children == NULL)
+    {
+        usage(argv[0], EXIT_FAILURE, "Error: please specify a number of children to fork");
+    }
+
+    if(optind < argc - 1)
+    {
+        usage(argv[0], EXIT_FAILURE, "Error: Too many arguments.");
+    }
+}
+
+_Noreturn static void usage(const char *program_name, int exit_code, const char *message)
+{
+    if(message)
+    {
+        fprintf(stderr, "%s\n", message);
+    }
+
+    fprintf(stderr, "Usage: %s [-h] -c <children>\n", program_name);
+    fputs("Options:\n", stderr);
+    fputs("  -h  Display this help message\n", stderr);
+    fputs("  -b <children> the number of children to fork\n", stderr);
+    exit(exit_code);
+}
+
+static void handle_arguments(const char *binary_name, const char *children_str, int *children)
+{
+    *children = parse_positive_int(binary_name, children_str);
+}
+
+int parse_positive_int(const char *binary_name, const char *str)
+{
+    char    *endptr;
+    intmax_t parsed_value;
+
+    errno        = 0;
+    parsed_value = strtoimax(str, &endptr, BASE_TEN);
+
+    if(errno != 0)
+    {
+        usage(binary_name, EXIT_FAILURE, "Error parsing integer.");
+    }
+
+    // Check if there are any non-numeric characters in the input string
+    if(*endptr != '\0')
+    {
+        usage(binary_name, EXIT_FAILURE, "Invalid characters in input.");
+    }
+
+    // Check if the parsed value is non-negative
+    if(parsed_value < 0 || parsed_value > INT_MAX)
+    {
+        usage(binary_name, EXIT_FAILURE, "Integer out of range or negative.");
+    }
+
+    return (int)parsed_value;
 }
