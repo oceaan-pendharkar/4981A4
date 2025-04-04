@@ -37,13 +37,17 @@
 #define PNG_EXT "gnp"
 #define GIF_EXT "fig"
 #define TXT_EXT "txt"
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     #define FILE_PATH_LEN 11
 #endif
 
 #if defined(__linux__)
     #define FILE_PATH_LEN 12
 #endif
+
+static void set_request_method(char *req_header, const char *buffer);
+static int  has_valid_first_line(const char *buffer);
+static int  has_valid_headers(const char *buffer);
 
 void my_function(const char *str)
 {
@@ -101,18 +105,24 @@ void set_request_path(char *req_path, const char *buffer)
     file_fd: Stores the file descriptor of the file
     file_state: Stores the file's metadata
  */
-void open_file_at_path(const char *request_path, int *file_fd, struct stat *file_stat)
+static void open_file_at_path(const char *request_path, int *file_fd, struct stat *file_stat)
 {
     // Allocate memory for the file path
     char *path = (char *)malloc(sizeof(char) * (strlen(request_path) + FILE_PATH_LEN + 1));
+    if(path == NULL)
+    {
+        perror("malloc failed for path");
+        *file_fd = -1;
+        return;
+    }
 
 // Set the base directory
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     strncpy(path, "./resources", FILE_PATH_LEN);
 #endif
 
 #if defined(__linux__)
-    strncpy(path, "../resources", FILE_PATH_LEN);
+    strncpy(path, "./resources", FILE_PATH_LEN);
 #endif
 
     // Append the requested file path
@@ -125,7 +135,7 @@ void open_file_at_path(const char *request_path, int *file_fd, struct stat *file
     // Retrieve the file metadata
     stat(path, file_stat);
 
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     printf("File size of %s: %lld bytes\n", path, file_stat->st_size);
 #endif
 
@@ -153,7 +163,7 @@ void open_file_at_path(const char *request_path, int *file_fd, struct stat *file
     -2: The requested file was not found, 404 page loaded instead
     -3: Memory allocation failed while creating content_string
  */
-int write_to_content_string(char **content_string, unsigned long *length, const char *file_path)
+static int write_to_content_string(char **content_string, unsigned long *length, const char *file_path)
 {
     char         c;                                     // Temp character for read functions
     struct stat  file_stat;                             // Holds file metadata
@@ -225,7 +235,7 @@ int write_to_content_string(char **content_string, unsigned long *length, const 
         return -2;
     }
 
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     printf("filestat st_size: %lld\n", fileStat->st_size);
 #endif
 
@@ -275,7 +285,8 @@ int write_to_content_string(char **content_string, unsigned long *length, const 
     request_path: The path of the requested file
     content_type_string: A string where the appropriate content-type will be stored
  */
-void set_content_type_from_file_extension(const char *request_path, char *content_type_string)
+// cppcheck-suppress constParameterPointer
+static void set_content_type_from_file_extension(const char *request_path, char *content_type_string)
 {
     size_t req_path_i                   = strlen(request_path) - 1;
     int    file_ext_i                   = 0;
@@ -291,38 +302,88 @@ void set_content_type_from_file_extension(const char *request_path, char *conten
 
     if(strcmp(file_extension, TXT_EXT) == 0)
     {
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, TEXT_CONTENT_TYPE, strlen(TEXT_CONTENT_TYPE));
         content_type_string[strlen(TEXT_CONTENT_TYPE)] = '\0';
+#endif
+
+#if defined(__linux__)
+        strncpy(content_type_string, TEXT_CONTENT_TYPE, BUFFER_SIZE - 1);
+        content_type_string[BUFFER_SIZE - 1] = '\0';
+#endif
     }
+
     else if(strcmp(file_extension, JS_EXT) == 0)
     {
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, JS_CONTENT_TYPE, strlen(JS_CONTENT_TYPE));
         content_type_string[strlen(JS_CONTENT_TYPE)] = '\0';
+#endif
+
+#if defined(__linux__)
+        strncpy(content_type_string, JS_CONTENT_TYPE, BUFFER_SIZE - 1);
+        content_type_string[BUFFER_SIZE - 1] = '\0';
+#endif
     }
     else if(strcmp(file_extension, CSS_EXT) == 0)
     {
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, CSS_CONTENT_TYPE, strlen(CSS_CONTENT_TYPE));
         content_type_string[strlen(CSS_CONTENT_TYPE)] = '\0';
+#endif
+
+#if defined(__linux__)
+        strncpy(content_type_string, CSS_CONTENT_TYPE, BUFFER_SIZE - 1);
+        content_type_string[BUFFER_SIZE - 1] = '\0';
+#endif
     }
     else if(strcmp(file_extension, JPG_EXT) == 0 || strcmp(file_extension, JPEG_EXT) == 0)
     {
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, JPEG_CONTENT_TYPE, strlen(JPEG_CONTENT_TYPE));
-        content_type_string[strlen(JPEG_CONTENT_TYPE)] = '\0';
+        content_type_string[strlen(TEXT_JPEG_TYPE)] = '\0';
+#endif
+
+#if defined(__linux__)
+        strncpy(content_type_string, JPEG_CONTENT_TYPE, BUFFER_SIZE - 1);
+        content_type_string[BUFFER_SIZE - 1] = '\0';
+#endif
     }
     else if(strcmp(file_extension, PNG_EXT) == 0)
     {
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, PNG_CONTENT_TYPE, strlen(PNG_CONTENT_TYPE));
         content_type_string[strlen(PNG_CONTENT_TYPE)] = '\0';
+#endif
+
+#if defined(__linux__)
+        strncpy(content_type_string, PNG_CONTENT_TYPE, BUFFER_SIZE - 1);
+        content_type_string[BUFFER_SIZE - 1] = '\0';
+#endif
     }
     else if(strcmp(file_extension, GIF_EXT) == 0)
     {
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, GIF_CONTENT_TYPE, strlen(GIF_CONTENT_TYPE));
         content_type_string[strlen(GIF_CONTENT_TYPE)] = '\0';
+#endif
+
+#if defined(__linux__)
+        strncpy(content_type_string, GIF_CONTENT_TYPE, BUFFER_SIZE - 1);
+        content_type_string[BUFFER_SIZE - 1] = '\0';
+#endif
     }
     else
     {
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, HTML_CONTENT_TYPE, strlen(HTML_CONTENT_TYPE));
         content_type_string[strlen(HTML_CONTENT_TYPE)] = '\0';
+#endif
+
+#if defined(__linux__)
+        strncpy(content_type_string, HTML_CONTENT_TYPE, BUFFER_SIZE - 1);
+        content_type_string[BUFFER_SIZE - 1] = '\0';
+#endif
     }
 
     printf("set content type header to: %s\n", content_type_string);
@@ -335,7 +396,7 @@ void set_content_type_from_file_extension(const char *request_path, char *conten
     response: Where the message will be appended
     msg: The message to be copied
  */
-void append_msg_to_response_string(char *response, const char *msg)
+static void append_msg_to_response_string(char *response, const char *msg)
 {
     strncpy(response, msg, strlen(msg));
     response[strlen(msg)] = '\0';
@@ -348,7 +409,7 @@ void append_msg_to_response_string(char *response, const char *msg)
     string: Where the converted value will be stored
     n: The number to be converted
  */
-void int_to_string(char *string, unsigned long n)
+static void int_to_string(char *string, unsigned long n)
 {
     char          buffer[TEN] = {0};
     int           digits      = 0;
@@ -387,7 +448,7 @@ void int_to_string(char *string, unsigned long n)
     response_string: Where the content-length will be appended
     length: Length of the HTTP body
  */
-void append_content_length_msg(char *response_string, unsigned long length)
+static void append_content_length_msg(char *response_string, unsigned long length)
 {
     char content_len_buffer[CONTENT_LEN_BUF];
     char content_length_msg[BUFFER_SIZE] = "Content-Length: ";
@@ -419,12 +480,19 @@ void append_content_length_msg(char *response_string, unsigned long length)
     content_string: The body content to be appended
     length: The length of the string to be appended
 */
-void append_body(char *response_string, const char *content_string, unsigned long length)
+static void append_body(char *response_string, const char *content_string, unsigned long length)
 {
     if(content_string != NULL)
     {
         strncat(response_string, content_string, length);
+
+#if (defined(__APPLE__) && defined(__MACH__))
         strncat(response_string, "\r\n", 2);
+#endif
+
+#if defined(__linux__)
+        strcat(response_string, "\r\n");
+#endif
     }
 }
 
@@ -439,7 +507,7 @@ void append_body(char *response_string, const char *content_string, unsigned lon
     0: Response successfully sent
     -1: An error occurred while writing to the socket
  */
-int write_to_client(int newsockfd, const char *response_string)
+static int write_to_client(int newsockfd, const char *response_string)
 {
     ssize_t valwrite;
     valwrite = write(newsockfd, response_string, strlen(response_string));
@@ -467,7 +535,7 @@ int write_to_client(int newsockfd, const char *response_string)
     -2: The requested file was not found (404 error)
     -3: Memory allocation failed during processing
  */
-int write_to_content_binary(int fd, const char *file_path)
+static int write_to_content_binary(int fd, const char *file_path)
 {
     struct stat  file_stat;                // Holds file metadata
     struct stat *fileStat = &file_stat;    // Pointer to file metadata
@@ -521,7 +589,7 @@ int write_to_content_binary(int fd, const char *file_path)
         return -2;
     }
 
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     printf("File size: %lld bytes\n", fileStat->st_size);
 #endif
 
@@ -851,7 +919,7 @@ int is_http_request(const char *buffer)
     0: The request has a valid first line
     -1: The request is invalid
  */
-int has_valid_first_line(const char *buffer)
+static int has_valid_first_line(const char *buffer)
 {
     int  i = 0;
     char c = buffer[i];
@@ -924,7 +992,7 @@ int has_valid_first_line(const char *buffer)
     0: The headers are valid
     -1: The headers are invalid
  */
-int has_valid_headers(const char *buffer)
+static int has_valid_headers(const char *buffer)
 {
     int  i              = 0;
     char c              = buffer[i];
@@ -990,7 +1058,7 @@ int has_valid_headers(const char *buffer)
     req_header: Where the HTTP request method will be stored
     buffer: The full HTTP request header
  */
-void set_request_method(char *req_header, const char *buffer)
+static void set_request_method(char *req_header, const char *buffer)
 {
     char c;
     int  i = 0;

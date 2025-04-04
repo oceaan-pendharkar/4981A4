@@ -55,7 +55,7 @@ static int            call_handle_client(int (*handle_c)(int, const char *, int,
 static int            call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer);
 static int            call_is_http(int (*is_http)(const char *), void *handle, char *buffer);
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message);
-int                   parse_positive_int(const char *binary_name, const char *str);
+static int            parse_positive_int(const char *binary_name, const char *str);
 static void           handle_arguments(const char *binary_name, const char *children_str, int *children);
 static void           parse_arguments(int argc, char *argv[], char **children);
 
@@ -444,8 +444,27 @@ int main(int argc, char *argv[])
             fd_from_monitor = recv_fd(dsfd[0]);
             printf("received fd from monitor: %d\n", fd_from_monitor);
 
-            // Add the FD back to readfds after getting it from the worker
+// Add the FD back to readfds after getting it from the worker
+#if (defined(__APPLE__) && defined(__MACH__))
             FD_SET(fd_from_monitor, &readfds);
+#endif
+
+#if defined(__linux__)
+            if(fd_from_monitor >= 0)
+            {
+                FD_SET(fd_from_monitor, &readfds);
+                if(fd_from_monitor > max_fd)
+                {
+                    max_fd = fd_from_monitor;
+                }
+            }
+            else
+            {
+                fprintf(stderr, "Warning: fd_from_monitor was negative: %d\n", fd_from_monitor);
+            }
+
+#endif
+
             if(fd_from_monitor > max_fd)
             {
                 max_fd = fd_from_monitor;
@@ -1035,7 +1054,7 @@ static void handle_arguments(const char *binary_name, const char *children_str, 
     *children = parse_positive_int(binary_name, children_str);
 }
 
-int parse_positive_int(const char *binary_name, const char *str)
+static int parse_positive_int(const char *binary_name, const char *str)
 {
     char    *endptr;
     intmax_t parsed_value;
