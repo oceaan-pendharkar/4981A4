@@ -69,7 +69,7 @@ void my_function(const char *str)
 {
     for(size_t i = 0; i < strlen(str); i++)
     {
-        printf("%c", tolower(str[i]));
+        printf("%c", toupper(str[i]));
     }
 }
 
@@ -110,7 +110,7 @@ void set_request_path(char *req_path, const char *buffer)
     req_path[j] = '\0';
 
     // Debug: print the extracted request
-    printf("request path: %s\n", req_path);
+    printf("Request path: %s\n", req_path);
 }
 
 /*
@@ -396,7 +396,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
 #endif
     }
 
-    printf("set content type header to: %s\n", content_type_string);
+    // printf("set content type header to: %s\n", content_type_string);
 }
 
 /*
@@ -764,7 +764,7 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
     {
         int retval   = 0;
         int writeval = 0;
-        printf("it's an image!!!\n");
+        // printf("it's an image!!!\n");
         response_length = strlen(HTTP_OK) + strlen(content_type_line) + CONTENT_LEN_BUF + length;
         response_string = (char *)malloc(sizeof(char) * (response_length + 1));
         if(response_string == NULL)
@@ -806,7 +806,7 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
         return retval;
     }
     // Request was successful
-    printf("request was successful");
+    // printf("request was successful");
     response_length = strlen(HTTP_OK) + strlen(content_type_line) + CONTENT_LEN_BUF + length;
     response_string = (char *)malloc(sizeof(char) * (response_length + 1));
     if(response_string == NULL)
@@ -1213,6 +1213,6 @@ static void set_request_method(char *req_header, const char *buffer)
     req_header[j] = '\0';
 
     // Debug: print the extracted request
-    printf("request path: %s\n", req_header);
-    printf("request path length: %d\n", (int)strlen(req_header));
+    // printf("request path: %s\n", req_header);
+    // printf("request path length: %d\n", (int)strlen(req_header));
 }

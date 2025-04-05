@@ -236,11 +236,11 @@ int main(int argc, char *argv[])
                 int client_fd_monitor = recv_fd(dsfd[1]);
                 if(client_fd_monitor > 0)
                 {
-                    printf("Monitor received client FD %d from server\n", client_fd_monitor);
+                    // printf("Monitor received client FD %d from server\n", client_fd_monitor);
 
                     // Send the FD to a worker (Round-robin or first available)
                     send_fd(worker_sockets[worker_index][0], client_fd_monitor);
-                    printf("Monitor sent client FD %d to worker %d\n", client_fd_monitor, worker_index);
+                    // printf("Monitor sent client FD %d to worker %d\n", client_fd_monitor, worker_index);
                     close(client_fd_monitor);
                     worker_index++;
                     if(worker_index == children)
@@ -258,9 +258,9 @@ int main(int argc, char *argv[])
                     int returned_fd = recv_fd(worker_sockets[i][0]);
                     if(returned_fd > 0)
                     {
-                        printf("Monitor received processed FD %d from worker %d\n", returned_fd, i);
+                        // printf("Monitor received processed FD %d from worker %d\n", returned_fd, i);
                         send_fd(dsfd[1], returned_fd);
-                        printf("Monitor sent fd %d back to server\n", returned_fd);
+                        // printf("Monitor sent fd %d back to server\n", returned_fd);
                         close(returned_fd);    // Clean up after worker has finished
                     }
                 }
@@ -280,8 +280,8 @@ int main(int argc, char *argv[])
     }
 
     // (Debugging) Print program arguments
-    printf("program arg: %d\n", argc);
-    printf("program argv[0]: %s\n", argv[0]);
+    // printf("program arg: %d\n", argc);
+    // printf("program argv[0]: %s\n", argv[0]);
 
     // Set up Signal Handler
     setup_signal_handler();
@@ -310,7 +310,7 @@ int main(int argc, char *argv[])
         free(child_pids);
         return 1;
     }
-    printf("Socket successfully bound to address\n");
+    // printf("Socket successfully bound to address\n");
 
     // Listen for incoming connections
     if(listen(server_fd, SOMAXCONN) != 0)
@@ -344,13 +344,13 @@ int main(int argc, char *argv[])
 #endif
     max_fd = server_fd;
 
-    printf("entering loop\n\n");
+    // printf("entering loop\n\n");
     while(!exit_flag)
     {
         int activity;    // Number of ready file descriptors
 
-        printf("adding client sockets\n");
-        // Add the client sockets to the set
+        // printf("adding client sockets\n");
+        //  Add the client sockets to the set
         for(size_t i = 0; i < max_clients; i++)
         {
             sd = client_sockets[i];
@@ -371,7 +371,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        printf("maxfd: %d\n", max_fd);
+        // printf("maxfd: %d\n", max_fd);
 
         // Wait for activity on one of the monitored sockets
         activity = select(max_fd + 1, &readfds, NULL, NULL, NULL);
@@ -381,7 +381,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        printf("select ok\n\n");
+        // printf("select ok\n\n");
 
         if(FD_ISSET(server_fd, &readfds))
         {
@@ -393,7 +393,7 @@ int main(int argc, char *argv[])
                 perror("webserver (accept)");
                 continue;
             }
-            printf("connection accepted\n");
+            printf("Connection Accepted\n");
 
             // Increase the size of the client_sockets array
             max_clients++;
@@ -411,7 +411,7 @@ int main(int argc, char *argv[])
                 client_sockets                  = temp;
                 client_sockets[max_clients - 1] = newsockfd;
             }
-            printf("Sending client fd %d\n", newsockfd);
+            // printf("Sending client fd %d\n", newsockfd);
             send_fd(dsfd[0], newsockfd);
             close(newsockfd);
 
@@ -431,9 +431,9 @@ int main(int argc, char *argv[])
             int fd_from_monitor;
             int added = 0;
 
-            printf("received fd from monitor on domain socket\n");
+            // printf("received fd from monitor on domain socket\n");
             fd_from_monitor = recv_fd(dsfd[0]);
-            printf("received fd from monitor: %d\n", fd_from_monitor);
+            // printf("received fd from monitor: %d\n", fd_from_monitor);
 
 // Add the FD back to readfds after getting it from the worker
 #if (defined(__APPLE__) && defined(__MACH__))
@@ -568,7 +568,7 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         return 1;
     }
 
-    printf("\nrequest path generated: %s\n", req_path);
+    // printf("\nrequest path generated: %s\n", req_path);
 
     // Detect HTTP Method
     if(strncmp(buffer, "POST ", FIVE) == 0)
@@ -582,7 +582,7 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
             return 1;
         }
 
-        printf("POST request received...\n");
+        printf("POST request detected\n");
         return handle_post_lib(buffer, client_fd);
     }
     if(strncmp(buffer, "HEAD ", FIVE) == 0)
@@ -590,7 +590,7 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         is_head = 0;    // says it IS a head request if  == 0
         is_img  = -1;
 
-        printf("head request detected\n");
+        printf("HEAD request detected\n");
 
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
@@ -599,13 +599,13 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         is_head = -1;
         is_img  = -1;
 
-        printf("Buffer being checked for image: %s\n", buffer);
+        // printf("Buffer being checked for image: %s\n", buffer);
         if(is_img_request(buffer) == 0)
         {
             is_img = 0;
         }
 
-        printf("get request detected\n");
+        printf("GET request detected\n");
 
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
@@ -854,7 +854,7 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
             return 1;
         }
 
-        printf("Received client fd in child: %d\n", fd);
+        // printf("Received client fd in child: %d\n", fd);
 
         // Check if http.so has been updated
         new_time = get_last_modified_time("./http.so");
@@ -915,8 +915,8 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
             // todo: kill this process ?
             printf("handle request failed in a child worker\n");
         }
-        printf("fd before sending back to monitor: %d\n", fd);
-        // sendmsg: send the fd back to the monitor
+        // printf("fd before sending back to monitor: %d\n", fd);
+        //  sendmsg: send the fd back to the monitor
         send_fd(worker_sockets[i][1], fd);
         printf("sent client fd back to monitor: %d\n", fd);
         close(fd);
@@ -961,7 +961,7 @@ static int call_handle_client(int (*handle_c)(int, const char *, int, int), void
 {
     ssize_t valwrite;
     // Retrieve function from shared library
-    printf("retrieving func from shared library\n\n");
+    // printf("retrieving func from shared library\n\n");
     // retrieving symbol (the function name in the lib is my_function)
     *(void **)(&handle_c) = dlsym(handle, "handle_client");
     if(!handle_c)
@@ -972,7 +972,7 @@ static int call_handle_client(int (*handle_c)(int, const char *, int, int), void
     }
 
     // Process and send HTTP response
-    printf("calling func %p\n", *(void **)(&handle_c));
+    // printf("calling func %p\n", *(void **)(&handle_c));
     printf("\n");
     valwrite = handle_c(client_fd, req_path, is_head, is_img);
     if(valwrite < 0)
