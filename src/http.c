@@ -1,6 +1,7 @@
 #include "http.h"
 #include <ctype.h>
 #include <fcntl.h>
+#include <ndbm.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +27,8 @@
 #define CONTENT_TERM_LEN 5
 #define FILE_EXT_LEN 5
 #define SIZE_404_MSG 20
+#define FOUR 4
+#define DB_BUFFER 16
 
 #define INDEX_FILE_PATH "/index.html"
 
@@ -39,10 +42,12 @@
 #define TXT_EXT "txt"
 #if (defined(__APPLE__) && defined(__MACH__))
     #define FILE_PATH_LEN 11
+typedef size_t datum_size;
 #endif
 
 #if defined(__linux__)
     #define FILE_PATH_LEN 12
+typedef int datum_size;
 #endif
 
 static void set_request_method(char *req_header, const char *buffer);
@@ -63,7 +68,7 @@ void my_function(const char *str)
 {
     for(size_t i = 0; i < strlen(str); i++)
     {
-        printf("%c", toupper(str[i]));
+        printf("%c", tolower(str[i]));
     }
 }
 
@@ -130,8 +135,9 @@ static void open_file_at_path(const char *request_path, int *file_fd, struct sta
     }
 
     // Build full path
-    strcpy(path, base_path);
-    strcat(path, request_path);
+    strncpy(path, base_path, total_len - 1);
+    path[total_len - 1] = '\0';
+    strncat(path, request_path, total_len - strlen(path) - 1);
 
     printf("file path: %s\n", path);
 
@@ -494,7 +500,7 @@ static void append_body(char *response_string, const char *content_string, unsig
 #endif
 
 #if defined(__linux__)
-        strcat(response_string, "\r\n");
+        strncat(response_string, "\r\n", BUFFER_SIZE - strlen(response_string) - 1);
 #endif
     }
 }
@@ -832,6 +838,92 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
 
     // write to client
     return result;
+}
+
+/*
+    Handles POST requests by extracting the body and storing it in an ndbm database.
+    Sends an appropriate HTTP response back to the client.
+
+    @param
+    buffer: Full HTTP request containing the POST body
+    client_fd: File descriptor for the client connection
+ */
+__attribute__((visibility("default"))) int handle_post_request(const char *buffer, int client_fd)
+{
+    DBM        *db;
+    datum       key;
+    datum       value;
+    char        db_name[DB_BUFFER];
+    char        key_str[DB_BUFFER];
+    char       *body;
+    const char *response;
+
+    strcpy(db_name, "requests_db");
+    strcpy(key_str, "post_data");
+
+    // Extract POST body
+    body = strstr(buffer, "\r\n\r\n");
+    if(body)
+    {
+        body += FOUR;
+        printf("POST data received: %s\n", body);
+    }
+    else
+    {
+        response = "HTTP/1.0 400 Bad Request\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 11\r\n"
+                   "\r\n"
+                   "Bad Request";
+        write(client_fd, response, strlen(response));
+        return 1;
+    }
+
+    // Open DB
+    db = dbm_open(db_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if(!db)
+    {
+        perror("dbm_open");
+        response = "HTTP/1.0 500 Internal Server Error\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 25\r\n"
+                   "\r\n"
+                   "Internal Server Error.\n";
+        write(client_fd, response, strlen(response));
+        return 1;
+    }
+
+    // Store data
+    key.dptr    = key_str;
+    key.dsize   = (datum_size)strlen(key_str) + 1;
+    value.dptr  = body;
+    value.dsize = (datum_size)strlen(body) + 1;
+
+    if(dbm_store(db, key, value, DBM_REPLACE) != 0)
+    {
+        perror("dbm_store");
+        dbm_close(db);
+        response = "HTTP/1.0 500 Internal Server Error\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 28\r\n"
+                   "\r\n"
+                   "Failed to store POST data.\n";
+        write(client_fd, response, strlen(response));
+        return 1;
+    }
+
+    dbm_close(db);
+
+    // Send 200 OK
+    response = "HTTP/1.0 200 OK\r\n"
+               "Content-Type: text/plain\r\n"
+               "Content-Length: 24\r\n"
+               "\r\n"
+               "POST data stored in DB.\n";
+
+    printf("POST response:\n%s\n", response);
+    write(client_fd, response, strlen(response));
+    return 0;
 }
 
 /*

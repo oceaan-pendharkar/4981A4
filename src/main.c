@@ -30,24 +30,15 @@
 #define FOUR 4
 #define FIVE 5
 #define BASE_TEN 10
-
-#ifdef __APPLE__
-typedef size_t datum_size;
-    #define DPT_CAST(ptr) ((char *)(ptr))
-#else
-typedef int datum_size;
-    #define DPT_CAST(ptr) (ptr)
-#endif
+#define RELOAD_MSG 60
 
 static void           setup_signal_handler(void);
 static void           sigint_handler(int signum);
 static int            handle_request(struct sockaddr_in client_addr, int client_fd, void *handle);
-static int            handle_post(const char *buffer);
 static int            recv_fd(int socket);
 static int            send_fd(int socket, int fd);
 static time_t         get_last_modified_time(const char *path);
 static void           format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
-static void           safe_dbm_fetch(DBM *db, datum key, datum *result);
 static int            worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets);
 static void           check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[], int children);
 static void           clean_up_worker_sockets(int **worker_sockets, int children);
@@ -545,6 +536,8 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
 
     char buffer[BUFFER_SIZE] = {0};    // Buffer for storing incoming data
     int  is_http;
+    int  is_head;
+    int  is_img;
     char req_path[BUFFER_SIZE];    // Path of the requested file
     int  retval;
 
@@ -580,23 +573,31 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     // Detect HTTP Method
     if(strncmp(buffer, "POST ", FIVE) == 0)
     {
+        int (*handle_post_lib)(const char *, int) = NULL;
+
+        *(void **)(&handle_post_lib) = dlsym(handle, "handle_post_request");
+        if(!handle_post_lib)
+        {
+            fprintf(stderr, "dlsym failed (handle_post_request): %s\n", dlerror());
+            return 1;
+        }
+
         printf("POST request received...\n");
-        // TODO: should be moved to shared lib
-        handle_post(buffer);
+        return handle_post_lib(buffer, client_fd);
     }
-    else if(strncmp(buffer, "HEAD ", FIVE) == 0)
+    if(strncmp(buffer, "HEAD ", FIVE) == 0)
     {
-        int is_head = 0;    // says it IS a head request if  == 0
-        int is_img  = -1;
+        is_head = 0;    // says it IS a head request if  == 0
+        is_img  = -1;
 
         printf("head request detected\n");
 
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
-    else if(strncmp(buffer, "GET ", FOUR) == 0)
+    if(strncmp(buffer, "GET ", FOUR) == 0)
     {
-        int is_head = -1;
-        int is_img  = -1;
+        is_head = -1;
+        is_img  = -1;
 
         printf("Buffer being checked for image: %s\n", buffer);
         if(is_img_request(buffer) == 0)
@@ -608,80 +609,15 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
 
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
-    else
+    if(strncmp(buffer, "HEAD ", FIVE) != 0 && strncmp(buffer, "GET ", FOUR) != 0 && strncmp(buffer, "POST ", FIVE) != 0)
     {
-        int is_head = -1;
-        int is_img  = -1;
+        is_head = -1;
+        is_img  = -1;
         strncpy(req_path, "/405.txt", LEN_405);
         req_path[TEN] = '\0';
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
 
-    return 0;
-}
-
-/*
-    Extracts POST data from the request and stores it in a DBM database
-
-    @param
-    buffer: The full HTTP request containing the POST body
- */
-static int handle_post(const char *buffer)
-{
-    DBM  *db;
-    datum key;
-    datum value;
-    datum fetched_value;
-    char  db_name[] = "requests_db";    // cppcheck-suppress constVariable
-    char  key_str[] = "post_data";
-
-    // Extract POST body
-    char *body = strstr(buffer, "\r\n\r\n");
-    if(body)
-    {
-        body += FOUR;
-        printf("POST data received: %s\n", body);
-    }
-    else
-    {
-        printf("No POST data found\n");
-        return 1;
-    }
-
-    // Open database (or create it if it doesn't exist)
-    db = dbm_open(db_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    if(!db)
-    {
-        perror("dbm_open");
-        return 1;
-    }
-
-    // Store POST data into database
-    key.dptr    = key_str;
-    key.dsize   = (datum_size)strlen((const char *)key.dptr) + 1;
-    value.dptr  = body;
-    value.dsize = (datum_size)strlen((const char *)value.dptr) + 1;
-
-    if(dbm_store(db, key, value, DBM_REPLACE) != 0)
-    {
-        perror("dbm_store");
-        dbm_close(db);
-        return 1;
-    }
-
-    // Verify that data was stored in DB
-    safe_dbm_fetch(db, key, &fetched_value);
-    if(fetched_value.dptr)
-    {
-        printf("Stored POST data: %s\n", DPT_CAST(fetched_value.dptr));
-    }
-    else
-    {
-        printf("Key not found\n");
-    }
-
-    // Close database
-    dbm_close(db);
     return 0;
 }
 
@@ -814,25 +750,6 @@ void format_timestamp(time_t timestamp, char *buffer, size_t buffer_size)
 }
 
 /*
-    Safely fetches a value from the DBM database and stores it in the result
-
-    @param
-    db: Pointer to the open DBM database
-    key: Key to look up
-    result: Output parameter to store the fetched value
- */
-static void safe_dbm_fetch(DBM *db, datum key, datum *result)
-{
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Waggregate-return"
-    datum temp = dbm_fetch(db, key);
-#pragma GCC diagnostic pop
-
-    result->dptr  = temp.dptr;
-    result->dsize = temp.dsize;
-}
-
-/*
     Checks for terminated worker processes and restarts them if needed
 
     @param
@@ -928,6 +845,17 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
         unsigned int       client_addrlen = sizeof(client_addr);
         memset(&client_addr, 0, sizeof(client_addr));
 
+        fd = recv_fd(worker_sockets[i][1]);    // recv_fd from monitor
+        if(fd == -1)
+        {
+            perror("webserver: worker (recv_fd)");
+            dlclose(handle);
+            free(client_sockets);
+            return 1;
+        }
+
+        printf("Received client fd in child: %d\n", fd);
+
         // Check if http.so has been updated
         new_time = get_last_modified_time("./http.so");
 
@@ -939,7 +867,7 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
 
         if(new_time > last_time)
         {
-            printf("Shared library updated! Reloading...\n\n");
+            char reload_msg[RELOAD_MSG];
 
             // Close old shared library
             if(handle)
@@ -964,19 +892,14 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
                 free(client_sockets);
                 return 1;
             }
+
+            // Confirms library was updated
+            strcpy(reload_msg, "Shared library updated! Reloading and matching case...");
+            my_func(reload_msg);
+            printf("\n\n");
+
             last_time = new_time;
         }
-
-        fd = recv_fd(worker_sockets[i][1]);    // recv_fd from monitor
-        if(fd == -1)
-        {
-            perror("webserver: worker (recv_fd)");
-            dlclose(handle);
-            free(client_sockets);
-            return 1;
-        }
-
-        printf("Received client fd in child: %d\n", fd);
 
         // Get client address
         sockn = getsockname(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addrlen);
@@ -986,7 +909,6 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
             continue;
         }
         // handle_request()
-        printf("handling client...\n");
         handle_result = handle_request(client_addr, fd, handle);
         if(handle_result == 1)
         {

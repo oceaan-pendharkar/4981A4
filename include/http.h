@@ -10,6 +10,7 @@
 void my_function(const char *str);
 void set_request_path(char *req_path, const char *buffer);
 int  handle_client(int newsockfd, const char *request_path, int is_head, int is_img);
+int  handle_post_request(const char *buffer, int client_fd);
 int  is_img_request(const char *buffer);
 int  is_http_request(const char *buffer);
 #endif
