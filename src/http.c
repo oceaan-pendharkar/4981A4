@@ -49,6 +49,16 @@ static void set_request_method(char *req_header, const char *buffer);
 static int  has_valid_first_line(const char *buffer);
 static int  has_valid_headers(const char *buffer);
 
+/*
+    Test function to verify dynamic updates to shared library behavior.
+
+    This function is used during runtime to test whether the server reflects changes
+    made to the shared library (e.g., switching between `toupper` and `tolower`).
+    The shared object should be updated while the server is running.
+
+    @param
+    str: The input string to process to either upper or lowercase
+ */
 void my_function(const char *str)
 {
     for(size_t i = 0; i < strlen(str); i++)
@@ -107,8 +117,11 @@ void set_request_path(char *req_path, const char *buffer)
  */
 static void open_file_at_path(const char *request_path, int *file_fd, struct stat *file_stat)
 {
-    // Allocate memory for the file path
-    char *path = (char *)malloc(sizeof(char) * (strlen(request_path) + FILE_PATH_LEN + 1));
+    const char *base_path = "./resources";
+    size_t      base_len  = strlen(base_path);
+    size_t      total_len = base_len + strlen(request_path) + 1;
+
+    char *path = (char *)malloc(total_len);
     if(path == NULL)
     {
         perror("malloc failed for path");
@@ -116,23 +129,13 @@ static void open_file_at_path(const char *request_path, int *file_fd, struct sta
         return;
     }
 
-// Set the base directory
-#if (defined(__APPLE__) && defined(__MACH__))
-    strncpy(path, "./resources", FILE_PATH_LEN);
-#endif
+    // Build full path
+    strcpy(path, base_path);
+    strcat(path, request_path);
 
-#if defined(__linux__)
-    strncpy(path, "./resources", FILE_PATH_LEN);
-#endif
-
-    // Append the requested file path
-    strncpy(path + FILE_PATH_LEN, request_path, strlen(request_path) + 1);
     printf("file path: %s\n", path);
 
-    // Open the file and store the file descriptor
     *file_fd = open(path, O_RDONLY | O_CLOEXEC);
-
-    // Retrieve the file metadata
     stat(path, file_stat);
 
 #if (defined(__APPLE__) && defined(__MACH__))

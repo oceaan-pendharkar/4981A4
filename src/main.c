@@ -529,6 +529,14 @@ static void sigint_handler(int signum)
     exit_flag = 1;
 }
 
+/*
+    Processes an HTTP request from the client and sends the appropriate response.
+
+    @param
+    client_addr: Client address info
+    client_fd: File descriptor for the client connection
+    handle: Handle to the shared library for dynamic function calls
+ */
 static int handle_request(struct sockaddr_in client_addr, int client_fd, void *handle)
 {
     int (*handle_c)(int, const char *, int, int)     = NULL;    // function pointer for handle_client
@@ -612,7 +620,12 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     return 0;
 }
 
-// Stores POST request data into an NDBM database
+/*
+    Extracts POST data from the request and stores it in a DBM database
+
+    @param
+    buffer: The full HTTP request containing the POST body
+ */
 static int handle_post(const char *buffer)
 {
     DBM  *db;
@@ -672,7 +685,15 @@ static int handle_post(const char *buffer)
     return 0;
 }
 
-// taken from the domain socket notes
+/*
+    Receives a file descriptor sent over a UNIX domain socket
+
+    @param
+    socket: The socket to receive the file descriptor from
+
+    @return
+    The received file descriptor, or -1 on error
+ */
 int recv_fd(int socket)
 {
     struct msghdr   msg = {0};
@@ -706,7 +727,16 @@ int recv_fd(int socket)
     return -1;
 }
 
-// copied from domain socket notes
+/*
+    Sends a file descriptor over a UNIX domain socket
+
+    @param
+    socket: The socket to send the file descriptor through
+    fd: The file descriptor to send
+
+    @return
+    0 on success, -1 on error
+ */
 int send_fd(int socket, int fd)
 {
     struct msghdr   msg    = {0};
@@ -738,7 +768,15 @@ int send_fd(int socket, int fd)
     return 0;
 }
 
-// Returns the last time http.so was modified
+/*
+    Retrieves the last modified time of a file
+
+    @param
+    path: Path to the file
+
+    @return
+    Last modified time on success, 0 on failure
+ */
 time_t get_last_modified_time(const char *path)
 {
     struct stat attr;
@@ -754,7 +792,14 @@ time_t get_last_modified_time(const char *path)
     return 0;
 }
 
-// Converts a timestamp into a human readable format
+/*
+    Formats a time value into a human-readable timestamp string
+
+    @param
+    timestamp: The time to format
+    buffer: Destination buffer for the formatted string
+    buffer_size: Size of the destination buffer
+ */
 void format_timestamp(time_t timestamp, char *buffer, size_t buffer_size)
 {
     struct tm tm_info;
@@ -768,6 +813,14 @@ void format_timestamp(time_t timestamp, char *buffer, size_t buffer_size)
     }
 }
 
+/*
+    Safely fetches a value from the DBM database and stores it in the result
+
+    @param
+    db: Pointer to the open DBM database
+    key: Key to look up
+    result: Output parameter to store the fetched value
+ */
 static void safe_dbm_fetch(DBM *db, datum key, datum *result)
 {
 #pragma GCC diagnostic push
@@ -779,6 +832,17 @@ static void safe_dbm_fetch(DBM *db, datum key, datum *result)
     result->dsize = temp.dsize;
 }
 
+/*
+    Checks for terminated worker processes and restarts them if needed
+
+    @param
+    last_time: Timestamp of the last shared library update
+    handle: Handle to the shared library
+    client_sockets: Array of client socket FDs
+    worker_sockets: 2D array of monitor-worker socket pairs
+    child_pids: Array of worker process IDs
+    children: Total number of worker processes
+ */
 static void check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[], int children)
 {
     int dead_worker;
@@ -834,6 +898,20 @@ static void check_for_dead_children(time_t last_time, void *handle, int client_s
     }
 }
 
+/*
+    Main loop for a worker process to handle client requests
+
+    @param
+    last_time: Last known modification time of the shared library
+    handle: Handle to the shared library
+    i: Index of the worker process
+    client_sockets: Array of client socket FDs
+    worker_sockets: 2D array of monitor-worker socket pairs
+
+    @return
+    0: Worker loop executed successfully
+	1: An error occurred
+ */
 static int worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets)
 {
     while(!exit_flag)
@@ -924,6 +1002,13 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
     return 0;
 }
 
+/*
+    Closes and frees all worker socket pairs
+
+    @param
+    worker_sockets: 2D array of monitor-worker socket pairs
+    children: Number of worker processes
+ */
 static void clean_up_worker_sockets(int **worker_sockets, int children)
 {
     for(int i = 0; i < children; i++)
@@ -935,6 +1020,21 @@ static void clean_up_worker_sockets(int **worker_sockets, int children)
     free((void *)worker_sockets);
 }
 
+/*
+    Loads and calls the handle_client function from the shared library
+
+    @param
+    handle_c: Function pointer for handle_client
+    handle: Handle to the shared library
+    client_fd: File descriptor for the client connection
+    req_path: Requested file path
+    is_head: 0 if HEAD request, -1 otherwise
+    is_img: 0 if image request, -1 otherwise
+
+    @return
+    0: Success
+    1: Error occurred
+ */
 static int call_handle_client(int (*handle_c)(int, const char *, int, int), void *handle, int client_fd, char *req_path, int is_head, int is_img)
 {
     ssize_t valwrite;
@@ -960,6 +1060,19 @@ static int call_handle_client(int (*handle_c)(int, const char *, int, int), void
     return 0;
 }
 
+/*
+    Loads and calls the set_request_path function from the shared library
+
+    @param
+    set_req_path: Function pointer for set_request_path
+    handle: Handle to the shared library
+    req_path: Output buffer to store the extracted request path
+    buffer: HTTP request buffer
+
+    @return
+    0: Success
+    1: An Error occurred
+ */
 static int call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer)
 {
     // Retrieve function from shared library
@@ -979,6 +1092,18 @@ static int call_set_request_path(void (*set_req_path)(const char *, const char *
     return 0;
 }
 
+/*
+    Loads and calls the is_http_request function from the shared library
+
+    @param
+    is_http: Function pointer for is_http_request
+    handle: Handle to the shared library
+    buffer: HTTP request buffer
+
+    @return
+    0: Valid HTTP request
+    1: Error occurred or invalid request
+ */
 static int call_is_http(int (*is_http)(const char *), void *handle, char *buffer)
 {
     // Retrieve function from shared library
@@ -997,6 +1122,15 @@ static int call_is_http(int (*is_http)(const char *), void *handle, char *buffer
     return is_http(buffer);
 }
 
+/*
+    Parses command-line arguments for program options
+
+    @param
+    argc: Argument count
+    argv: Argument vector
+    children: Output pointer to store the number of child processes (as a string)
+
+ */
 static void parse_arguments(int argc, char *argv[], char **children)
 {
     int opt;
@@ -1035,6 +1169,15 @@ static void parse_arguments(int argc, char *argv[], char **children)
     }
 }
 
+/*
+    Prints usage information and exits the program
+
+    @param
+    program_name: Name of the executable
+    exit_code: Exit status code
+    message: Optional error or help message to display
+
+ */
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message)
 {
     if(message)
@@ -1045,15 +1188,33 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
     fprintf(stderr, "Usage: %s [-h] -c <children>\n", program_name);
     fputs("Options:\n", stderr);
     fputs("  -h  Display this help message\n", stderr);
-    fputs("  -b <children> the number of children to fork\n", stderr);
+    fputs("  -c <children> the number of children to fork\n", stderr);
     exit(exit_code);
 }
 
+/*
+    Converts the children argument string to an integer
+
+    @param
+    binary_name: Name of the executable (used for error reporting)
+    children_str: String representing number of child processes
+    children: Output pointer to store parsed integer value
+ */
 static void handle_arguments(const char *binary_name, const char *children_str, int *children)
 {
     *children = parse_positive_int(binary_name, children_str);
 }
 
+/*
+    Parses a string as a positive integer with error handling
+
+    @param
+    binary_name: Name of the executable (used for error reporting)
+    str: String to parse
+
+    @return
+    Parsed positive integer value, exits on error
+ */
 static int parse_positive_int(const char *binary_name, const char *str)
 {
     char    *endptr;
