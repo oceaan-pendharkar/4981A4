@@ -910,7 +910,7 @@ static void check_for_dead_children(time_t last_time, void *handle, int client_s
 
     @return
     0: Worker loop executed successfully
-	1: An error occurred
+    1: An error occurred
  */
 static int worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets)
 {
