@@ -29,6 +29,7 @@
 #define SIZE_404_MSG 20
 #define FOUR 4
 #define DB_BUFFER 16
+#define BASE_TEN 10
 
 #define INDEX_FILE_PATH "/index.html"
 
@@ -853,13 +854,20 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
     DBM        *db;
     datum       key;
     datum       value;
+    datum       counter_key;
+    datum       counter_val;
+    datum       new_counter_val;
     char        db_name[DB_BUFFER];
     char        key_str[DB_BUFFER];
+    char        counter_buf[DB_BUFFER];
+    char        counter_key_buf[DB_BUFFER];
     char       *body;
     const char *response;
+    int         counter = 0;
 
     strcpy(db_name, "requests_db");
     strcpy(key_str, "post_data");
+    strcpy(counter_key_buf, "__counter__");
 
     // Extract POST body
     body = strstr(buffer, "\r\n\r\n");
@@ -893,6 +901,29 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
         return 1;
     }
 
+    // Setup counter key
+    counter_key.dptr  = counter_key_buf;
+    counter_key.dsize = strlen("__counter__") + 1;
+
+// Fetch existing counter
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waggregate-return"
+    counter_val = dbm_fetch(db, counter_key);
+#pragma GCC diagnostic pop
+    if(counter_val.dptr != NULL)
+    {
+        char *endptr = NULL;
+        counter      = (int)strtol(counter_val.dptr, &endptr, BASE_TEN);
+        if(endptr == counter_val.dptr || *endptr != '\0')
+        {
+            fprintf(stderr, "Invalid counter value in DB: %s\n", counter_val.dptr);
+            counter = 0;
+        }
+    }
+
+    // Generate new key using counter
+    snprintf(key_str, DB_BUFFER, "%d", counter);
+
     // Store data
     key.dptr    = key_str;
     key.dsize   = (datum_size)strlen(key_str) + 1;
@@ -912,6 +943,14 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
         return 1;
     }
 
+    printf("Stored POST Data under Key: %s\n", key_str);
+
+    // Update counter
+    snprintf(counter_buf, DB_BUFFER, "%d", counter + 1);
+    new_counter_val.dptr  = counter_buf;
+    new_counter_val.dsize = (datum_size)strlen(counter_buf) + 1;
+    dbm_store(db, counter_key, new_counter_val, DBM_REPLACE);
+
     dbm_close(db);
 
     // Send 200 OK
@@ -923,6 +962,7 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
 
     printf("POST response:\n%s\n", response);
     write(client_fd, response, strlen(response));
+
     return 0;
 }
 
