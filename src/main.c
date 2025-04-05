@@ -30,24 +30,15 @@
 #define FOUR 4
 #define FIVE 5
 #define BASE_TEN 10
-
-#ifdef __APPLE__
-typedef size_t datum_size;
-    #define DPT_CAST(ptr) ((char *)(ptr))
-#else
-typedef int datum_size;
-    #define DPT_CAST(ptr) (ptr)
-#endif
+#define RELOAD_MSG 60
 
 static void           setup_signal_handler(void);
 static void           sigint_handler(int signum);
 static int            handle_request(struct sockaddr_in client_addr, int client_fd, void *handle);
-static int            handle_post(const char *buffer);
 static int            recv_fd(int socket);
 static int            send_fd(int socket, int fd);
 static time_t         get_last_modified_time(const char *path);
 static void           format_timestamp(time_t timestamp, char *buffer, size_t buffer_size);
-static void           safe_dbm_fetch(DBM *db, datum key, datum *result);
 static int            worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets);
 static void           check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[], int children);
 static void           clean_up_worker_sockets(int **worker_sockets, int children);
@@ -55,7 +46,7 @@ static int            call_handle_client(int (*handle_c)(int, const char *, int,
 static int            call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer);
 static int            call_is_http(int (*is_http)(const char *), void *handle, char *buffer);
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message);
-int                   parse_positive_int(const char *binary_name, const char *str);
+static int            parse_positive_int(const char *binary_name, const char *str);
 static void           handle_arguments(const char *binary_name, const char *children_str, int *children);
 static void           parse_arguments(int argc, char *argv[], char **children);
 
@@ -245,11 +236,11 @@ int main(int argc, char *argv[])
                 int client_fd_monitor = recv_fd(dsfd[1]);
                 if(client_fd_monitor > 0)
                 {
-                    printf("Monitor received client FD %d from server\n", client_fd_monitor);
+                    // printf("Monitor received client FD %d from server\n", client_fd_monitor);
 
                     // Send the FD to a worker (Round-robin or first available)
                     send_fd(worker_sockets[worker_index][0], client_fd_monitor);
-                    printf("Monitor sent client FD %d to worker %d\n", client_fd_monitor, worker_index);
+                    // printf("Monitor sent client FD %d to worker %d\n", client_fd_monitor, worker_index);
                     close(client_fd_monitor);
                     worker_index++;
                     if(worker_index == children)
@@ -267,9 +258,9 @@ int main(int argc, char *argv[])
                     int returned_fd = recv_fd(worker_sockets[i][0]);
                     if(returned_fd > 0)
                     {
-                        printf("Monitor received processed FD %d from worker %d\n", returned_fd, i);
+                        // printf("Monitor received processed FD %d from worker %d\n", returned_fd, i);
                         send_fd(dsfd[1], returned_fd);
-                        printf("Monitor sent fd %d back to server\n", returned_fd);
+                        // printf("Monitor sent fd %d back to server\n", returned_fd);
                         close(returned_fd);    // Clean up after worker has finished
                     }
                 }
@@ -289,8 +280,8 @@ int main(int argc, char *argv[])
     }
 
     // (Debugging) Print program arguments
-    printf("program arg: %d\n", argc);
-    printf("program argv[0]: %s\n", argv[0]);
+    // printf("program arg: %d\n", argc);
+    // printf("program argv[0]: %s\n", argv[0]);
 
     // Set up Signal Handler
     setup_signal_handler();
@@ -319,7 +310,7 @@ int main(int argc, char *argv[])
         free(child_pids);
         return 1;
     }
-    printf("Socket successfully bound to address\n");
+    // printf("Socket successfully bound to address\n");
 
     // Listen for incoming connections
     if(listen(server_fd, SOMAXCONN) != 0)
@@ -353,13 +344,13 @@ int main(int argc, char *argv[])
 #endif
     max_fd = server_fd;
 
-    printf("entering loop\n\n");
+    // printf("entering loop\n\n");
     while(!exit_flag)
     {
         int activity;    // Number of ready file descriptors
 
-        printf("adding client sockets\n");
-        // Add the client sockets to the set
+        // printf("adding client sockets\n");
+        //  Add the client sockets to the set
         for(size_t i = 0; i < max_clients; i++)
         {
             sd = client_sockets[i];
@@ -380,7 +371,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        printf("maxfd: %d\n", max_fd);
+        // printf("maxfd: %d\n", max_fd);
 
         // Wait for activity on one of the monitored sockets
         activity = select(max_fd + 1, &readfds, NULL, NULL, NULL);
@@ -390,7 +381,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        printf("select ok\n\n");
+        // printf("select ok\n\n");
 
         if(FD_ISSET(server_fd, &readfds))
         {
@@ -402,7 +393,7 @@ int main(int argc, char *argv[])
                 perror("webserver (accept)");
                 continue;
             }
-            printf("connection accepted\n");
+            printf("Connection Accepted\n");
 
             // Increase the size of the client_sockets array
             max_clients++;
@@ -420,7 +411,7 @@ int main(int argc, char *argv[])
                 client_sockets                  = temp;
                 client_sockets[max_clients - 1] = newsockfd;
             }
-            printf("Sending client fd %d\n", newsockfd);
+            // printf("Sending client fd %d\n", newsockfd);
             send_fd(dsfd[0], newsockfd);
             close(newsockfd);
 
@@ -440,12 +431,31 @@ int main(int argc, char *argv[])
             int fd_from_monitor;
             int added = 0;
 
-            printf("received fd from monitor on domain socket\n");
+            // printf("received fd from monitor on domain socket\n");
             fd_from_monitor = recv_fd(dsfd[0]);
-            printf("received fd from monitor: %d\n", fd_from_monitor);
+            // printf("received fd from monitor: %d\n", fd_from_monitor);
 
-            // Add the FD back to readfds after getting it from the worker
+// Add the FD back to readfds after getting it from the worker
+#if (defined(__APPLE__) && defined(__MACH__))
             FD_SET(fd_from_monitor, &readfds);
+#endif
+
+#if defined(__linux__)
+            if(fd_from_monitor >= 0)
+            {
+                FD_SET(fd_from_monitor, &readfds);
+                if(fd_from_monitor > max_fd)
+                {
+                    max_fd = fd_from_monitor;
+                }
+            }
+            else
+            {
+                fprintf(stderr, "Warning: fd_from_monitor was negative: %d\n", fd_from_monitor);
+            }
+
+#endif
+
             if(fd_from_monitor > max_fd)
             {
                 max_fd = fd_from_monitor;
@@ -510,6 +520,14 @@ static void sigint_handler(int signum)
     exit_flag = 1;
 }
 
+/*
+    Processes an HTTP request from the client and sends the appropriate response.
+
+    @param
+    client_addr: Client address info
+    client_fd: File descriptor for the client connection
+    handle: Handle to the shared library for dynamic function calls
+ */
 static int handle_request(struct sockaddr_in client_addr, int client_fd, void *handle)
 {
     int (*handle_c)(int, const char *, int, int)     = NULL;    // function pointer for handle_client
@@ -518,6 +536,8 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
 
     char buffer[BUFFER_SIZE] = {0};    // Buffer for storing incoming data
     int  is_http;
+    int  is_head;
+    int  is_img;
     char req_path[BUFFER_SIZE];    // Path of the requested file
     int  retval;
 
@@ -548,43 +568,51 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
         return 1;
     }
 
-    printf("\nrequest path generated: %s\n", req_path);
+    // printf("\nrequest path generated: %s\n", req_path);
 
     // Detect HTTP Method
     if(strncmp(buffer, "POST ", FIVE) == 0)
     {
-        printf("POST request received...\n");
-        // TODO: should be moved to shared lib
-        handle_post(buffer);
-    }
-    else if(strncmp(buffer, "HEAD ", FIVE) == 0)
-    {
-        int is_head = 0;    // says it IS a head request if  == 0
-        int is_img  = -1;
+        int (*handle_post_lib)(const char *, int) = NULL;
 
-        printf("head request detected\n");
+        *(void **)(&handle_post_lib) = dlsym(handle, "handle_post_request");
+        if(!handle_post_lib)
+        {
+            fprintf(stderr, "dlsym failed (handle_post_request): %s\n", dlerror());
+            return 1;
+        }
+
+        printf("POST request detected\n");
+        return handle_post_lib(buffer, client_fd);
+    }
+    if(strncmp(buffer, "HEAD ", FIVE) == 0)
+    {
+        is_head = 0;    // says it IS a head request if  == 0
+        is_img  = -1;
+
+        printf("HEAD request detected\n");
 
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
-    else if(strncmp(buffer, "GET ", FOUR) == 0)
+    if(strncmp(buffer, "GET ", FOUR) == 0)
     {
-        int is_head = -1;
-        int is_img  = -1;
+        is_head = -1;
+        is_img  = -1;
 
-        printf("Buffer being checked for image: %s\n", buffer);
+        // printf("Buffer being checked for image: %s\n", buffer);
         if(is_img_request(buffer) == 0)
         {
             is_img = 0;
         }
 
-        printf("get request detected\n");
+        printf("GET request detected\n");
 
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
     }
-    else
+    if(strncmp(buffer, "HEAD ", FIVE) != 0 && strncmp(buffer, "GET ", FOUR) != 0 && strncmp(buffer, "POST ", FIVE) != 0)
     {
-        int is_head = -1;
-        int is_img  = -1;
+        is_head = -1;
+        is_img  = -1;
         strncpy(req_path, "/405.txt", LEN_405);
         req_path[TEN] = '\0';
         return call_handle_client(handle_c, handle, client_fd, req_path, is_head, is_img);
@@ -593,67 +621,15 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     return 0;
 }
 
-// Stores POST request data into an NDBM database
-static int handle_post(const char *buffer)
-{
-    DBM  *db;
-    datum key;
-    datum value;
-    datum fetched_value;
-    char  db_name[] = "requests_db";    // cppcheck-suppress constVariable
-    char  key_str[] = "post_data";
+/*
+    Receives a file descriptor sent over a UNIX domain socket
 
-    // Extract POST body
-    char *body = strstr(buffer, "\r\n\r\n");
-    if(body)
-    {
-        body += FOUR;
-        printf("POST data received: %s\n", body);
-    }
-    else
-    {
-        printf("No POST data found\n");
-        return 1;
-    }
+    @param
+    socket: The socket to receive the file descriptor from
 
-    // Open database (or create it if it doesn't exist)
-    db = dbm_open(db_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    if(!db)
-    {
-        perror("dbm_open");
-        return 1;
-    }
-
-    // Store POST data into database
-    key.dptr    = key_str;
-    key.dsize   = (datum_size)strlen((const char *)key.dptr) + 1;
-    value.dptr  = body;
-    value.dsize = (datum_size)strlen((const char *)value.dptr) + 1;
-
-    if(dbm_store(db, key, value, DBM_REPLACE) != 0)
-    {
-        perror("dbm_store");
-        dbm_close(db);
-        return 1;
-    }
-
-    // Verify that data was stored in DB
-    safe_dbm_fetch(db, key, &fetched_value);
-    if(fetched_value.dptr)
-    {
-        printf("Stored POST data: %s\n", DPT_CAST(fetched_value.dptr));
-    }
-    else
-    {
-        printf("Key not found\n");
-    }
-
-    // Close database
-    dbm_close(db);
-    return 0;
-}
-
-// taken from the domain socket notes
+    @return
+    The received file descriptor, or -1 on error
+ */
 int recv_fd(int socket)
 {
     struct msghdr   msg = {0};
@@ -687,7 +663,16 @@ int recv_fd(int socket)
     return -1;
 }
 
-// copied from domain socket notes
+/*
+    Sends a file descriptor over a UNIX domain socket
+
+    @param
+    socket: The socket to send the file descriptor through
+    fd: The file descriptor to send
+
+    @return
+    0 on success, -1 on error
+ */
 int send_fd(int socket, int fd)
 {
     struct msghdr   msg    = {0};
@@ -719,7 +704,15 @@ int send_fd(int socket, int fd)
     return 0;
 }
 
-// Returns the last time http.so was modified
+/*
+    Retrieves the last modified time of a file
+
+    @param
+    path: Path to the file
+
+    @return
+    Last modified time on success, 0 on failure
+ */
 time_t get_last_modified_time(const char *path)
 {
     struct stat attr;
@@ -735,7 +728,14 @@ time_t get_last_modified_time(const char *path)
     return 0;
 }
 
-// Converts a timestamp into a human readable format
+/*
+    Formats a time value into a human-readable timestamp string
+
+    @param
+    timestamp: The time to format
+    buffer: Destination buffer for the formatted string
+    buffer_size: Size of the destination buffer
+ */
 void format_timestamp(time_t timestamp, char *buffer, size_t buffer_size)
 {
     struct tm tm_info;
@@ -749,17 +749,17 @@ void format_timestamp(time_t timestamp, char *buffer, size_t buffer_size)
     }
 }
 
-static void safe_dbm_fetch(DBM *db, datum key, datum *result)
-{
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Waggregate-return"
-    datum temp = dbm_fetch(db, key);
-#pragma GCC diagnostic pop
+/*
+    Checks for terminated worker processes and restarts them if needed
 
-    result->dptr  = temp.dptr;
-    result->dsize = temp.dsize;
-}
-
+    @param
+    last_time: Timestamp of the last shared library update
+    handle: Handle to the shared library
+    client_sockets: Array of client socket FDs
+    worker_sockets: 2D array of monitor-worker socket pairs
+    child_pids: Array of worker process IDs
+    children: Total number of worker processes
+ */
 static void check_for_dead_children(time_t last_time, void *handle, int client_sockets[], int **worker_sockets, int child_pids[], int children)
 {
     int dead_worker;
@@ -815,6 +815,20 @@ static void check_for_dead_children(time_t last_time, void *handle, int client_s
     }
 }
 
+/*
+    Main loop for a worker process to handle client requests
+
+    @param
+    last_time: Last known modification time of the shared library
+    handle: Handle to the shared library
+    i: Index of the worker process
+    client_sockets: Array of client socket FDs
+    worker_sockets: 2D array of monitor-worker socket pairs
+
+    @return
+    0: Worker loop executed successfully
+    1: An error occurred
+ */
 static int worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets)
 {
     while(!exit_flag)
@@ -831,6 +845,17 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
         unsigned int       client_addrlen = sizeof(client_addr);
         memset(&client_addr, 0, sizeof(client_addr));
 
+        fd = recv_fd(worker_sockets[i][1]);    // recv_fd from monitor
+        if(fd == -1)
+        {
+            perror("webserver: worker (recv_fd)");
+            dlclose(handle);
+            free(client_sockets);
+            return 1;
+        }
+
+        // printf("Received client fd in child: %d\n", fd);
+
         // Check if http.so has been updated
         new_time = get_last_modified_time("./http.so");
 
@@ -842,7 +867,7 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
 
         if(new_time > last_time)
         {
-            printf("Shared library updated! Reloading...\n\n");
+            char reload_msg[RELOAD_MSG];
 
             // Close old shared library
             if(handle)
@@ -867,19 +892,14 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
                 free(client_sockets);
                 return 1;
             }
+
+            // Confirms library was updated
+            strcpy(reload_msg, "Shared library updated! Reloading and matching case...");
+            my_func(reload_msg);
+            printf("\n\n");
+
             last_time = new_time;
         }
-
-        fd = recv_fd(worker_sockets[i][1]);    // recv_fd from monitor
-        if(fd == -1)
-        {
-            perror("webserver: worker (recv_fd)");
-            dlclose(handle);
-            free(client_sockets);
-            return 1;
-        }
-
-        printf("Received client fd in child: %d\n", fd);
 
         // Get client address
         sockn = getsockname(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addrlen);
@@ -889,15 +909,14 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
             continue;
         }
         // handle_request()
-        printf("handling client...\n");
         handle_result = handle_request(client_addr, fd, handle);
         if(handle_result == 1)
         {
             // todo: kill this process ?
             printf("handle request failed in a child worker\n");
         }
-        printf("fd before sending back to monitor: %d\n", fd);
-        // sendmsg: send the fd back to the monitor
+        // printf("fd before sending back to monitor: %d\n", fd);
+        //  sendmsg: send the fd back to the monitor
         send_fd(worker_sockets[i][1], fd);
         printf("sent client fd back to monitor: %d\n", fd);
         close(fd);
@@ -905,6 +924,13 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
     return 0;
 }
 
+/*
+    Closes and frees all worker socket pairs
+
+    @param
+    worker_sockets: 2D array of monitor-worker socket pairs
+    children: Number of worker processes
+ */
 static void clean_up_worker_sockets(int **worker_sockets, int children)
 {
     for(int i = 0; i < children; i++)
@@ -916,11 +942,26 @@ static void clean_up_worker_sockets(int **worker_sockets, int children)
     free((void *)worker_sockets);
 }
 
+/*
+    Loads and calls the handle_client function from the shared library
+
+    @param
+    handle_c: Function pointer for handle_client
+    handle: Handle to the shared library
+    client_fd: File descriptor for the client connection
+    req_path: Requested file path
+    is_head: 0 if HEAD request, -1 otherwise
+    is_img: 0 if image request, -1 otherwise
+
+    @return
+    0: Success
+    1: Error occurred
+ */
 static int call_handle_client(int (*handle_c)(int, const char *, int, int), void *handle, int client_fd, char *req_path, int is_head, int is_img)
 {
     ssize_t valwrite;
     // Retrieve function from shared library
-    printf("retrieving func from shared library\n\n");
+    // printf("retrieving func from shared library\n\n");
     // retrieving symbol (the function name in the lib is my_function)
     *(void **)(&handle_c) = dlsym(handle, "handle_client");
     if(!handle_c)
@@ -931,7 +972,7 @@ static int call_handle_client(int (*handle_c)(int, const char *, int, int), void
     }
 
     // Process and send HTTP response
-    printf("calling func %p\n", *(void **)(&handle_c));
+    // printf("calling func %p\n", *(void **)(&handle_c));
     printf("\n");
     valwrite = handle_c(client_fd, req_path, is_head, is_img);
     if(valwrite < 0)
@@ -941,6 +982,19 @@ static int call_handle_client(int (*handle_c)(int, const char *, int, int), void
     return 0;
 }
 
+/*
+    Loads and calls the set_request_path function from the shared library
+
+    @param
+    set_req_path: Function pointer for set_request_path
+    handle: Handle to the shared library
+    req_path: Output buffer to store the extracted request path
+    buffer: HTTP request buffer
+
+    @return
+    0: Success
+    1: An Error occurred
+ */
 static int call_set_request_path(void (*set_req_path)(const char *, const char *), void *handle, char *req_path, char *buffer)
 {
     // Retrieve function from shared library
@@ -960,6 +1014,18 @@ static int call_set_request_path(void (*set_req_path)(const char *, const char *
     return 0;
 }
 
+/*
+    Loads and calls the is_http_request function from the shared library
+
+    @param
+    is_http: Function pointer for is_http_request
+    handle: Handle to the shared library
+    buffer: HTTP request buffer
+
+    @return
+    0: Valid HTTP request
+    1: Error occurred or invalid request
+ */
 static int call_is_http(int (*is_http)(const char *), void *handle, char *buffer)
 {
     // Retrieve function from shared library
@@ -978,6 +1044,15 @@ static int call_is_http(int (*is_http)(const char *), void *handle, char *buffer
     return is_http(buffer);
 }
 
+/*
+    Parses command-line arguments for program options
+
+    @param
+    argc: Argument count
+    argv: Argument vector
+    children: Output pointer to store the number of child processes (as a string)
+
+ */
 static void parse_arguments(int argc, char *argv[], char **children)
 {
     int opt;
@@ -1016,6 +1091,15 @@ static void parse_arguments(int argc, char *argv[], char **children)
     }
 }
 
+/*
+    Prints usage information and exits the program
+
+    @param
+    program_name: Name of the executable
+    exit_code: Exit status code
+    message: Optional error or help message to display
+
+ */
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message)
 {
     if(message)
@@ -1026,16 +1110,34 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
     fprintf(stderr, "Usage: %s [-h] -c <children>\n", program_name);
     fputs("Options:\n", stderr);
     fputs("  -h  Display this help message\n", stderr);
-    fputs("  -b <children> the number of children to fork\n", stderr);
+    fputs("  -c <children> the number of children to fork\n", stderr);
     exit(exit_code);
 }
 
+/*
+    Converts the children argument string to an integer
+
+    @param
+    binary_name: Name of the executable (used for error reporting)
+    children_str: String representing number of child processes
+    children: Output pointer to store parsed integer value
+ */
 static void handle_arguments(const char *binary_name, const char *children_str, int *children)
 {
     *children = parse_positive_int(binary_name, children_str);
 }
 
-int parse_positive_int(const char *binary_name, const char *str)
+/*
+    Parses a string as a positive integer with error handling
+
+    @param
+    binary_name: Name of the executable (used for error reporting)
+    str: String to parse
+
+    @return
+    Parsed positive integer value, exits on error
+ */
+static int parse_positive_int(const char *binary_name, const char *str)
 {
     char    *endptr;
     intmax_t parsed_value;
