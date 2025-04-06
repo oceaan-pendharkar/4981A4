@@ -1,28 +1,15 @@
 #include <errno.h>
 #include <fcntl.h>
-#if(defined(__APPLE__) && defined(__MACH__))
 #include <gdbm.h>
-#endif
-
-#if defined(__linux__)
-#indluce <ndbm.h>
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifdef __APPLE__
-typedef size_t datum_size;
-#else
-typedef int datum_size;
-#endif
-
-#define MAKE_CONST_DATUM(str) ((const_datum){(str), (datum_size)strlen(str) + 1})
-#define BUFFER_SIZE 16
+#define BUFFER_SIZE 25
 #define BASE_TEN 10
+#define PERMS 0666
 
 typedef enum
 {
@@ -35,15 +22,7 @@ typedef enum
 
 typedef struct
 {
-    // cppcheck-suppress unusedStructMember
-    const void *dptr;
-    // cppcheck-suppress unusedStructMember
-    datum_size dsize;
-} const_datum;
-
-typedef struct
-{
-    DBM *request_db;
+    GDBM_FILE request_db;
 } DBContext;
 
 typedef struct
@@ -55,29 +34,22 @@ typedef struct
 static int            fetch_value(DBContext *ctx, const char *key_str);
 static void           parse_arguments(int argc, char *argv[], ParsedArgs *parsed_args);
 static int            fetch_all(DBContext *ctx);
-static int            get_last_key(DBM *db, char *key_out, size_t buf_size);
+static int            get_last_key(GDBM_FILE db, char *key_out, size_t buf_size);
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message);
-static void           print_key_value(const char *key, const char *value);
+static void           print_key_value(datum key, const char *value);
 
 int main(int argc, char *argv[])
 {
     DBContext  db_ctx;
     ParsedArgs args;
     int        result = EXIT_SUCCESS;
-    char       db_name[BUFFER_SIZE];
 
-    strcpy(db_name, "requests_db");
     parse_arguments(argc, argv, &args);
 
-    if(args.cmd == CMD_HELP)
-    {
-        usage(argv[0], EXIT_SUCCESS, NULL);
-    }
-
-    db_ctx.request_db = dbm_open(db_name, O_RDONLY, 0);
+    db_ctx.request_db = gdbm_open("requests_db.db", 0, GDBM_READER, PERMS, NULL);
     if(!db_ctx.request_db)
     {
-        perror("dbm_open");
+        perror("gdbm_open");
         return EXIT_FAILURE;
     }
 
@@ -85,16 +57,13 @@ int main(int argc, char *argv[])
     {
         result = fetch_all(&db_ctx);
     }
-
-    if(args.cmd == CMD_KEY)
+    else if(args.cmd == CMD_KEY)
     {
         result = fetch_value(&db_ctx, args.key_arg);
     }
-
-    if(args.cmd == CMD_LATEST)
+    else if(args.cmd == CMD_LATEST)
     {
         char last_key[BUFFER_SIZE];
-
         result = get_last_key(db_ctx.request_db, last_key, BUFFER_SIZE);
         if(result == EXIT_SUCCESS)
         {
@@ -102,36 +71,41 @@ int main(int argc, char *argv[])
         }
     }
 
-    dbm_close(db_ctx.request_db);
+    gdbm_close(db_ctx.request_db);
     return result;
 }
 
-/*
-    Fetches and prints the value for a given key from the database
-
-    @param
-    ctx: Pointer to the DB context containing the open database
-    key_str: Key to look up
-
-    @return
-    EXIT_SUCCESS: Key found and printed
-    EXIT_FAILURE: Key not found
- */
 static int fetch_value(DBContext *ctx, const char *key_str)
 {
-    const_datum key_datum;
-    datum       result;
+    datum key;
+    datum value;
 
-    key_datum = MAKE_CONST_DATUM(key_str);
+    char mutable_key[BUFFER_SIZE];
+    strncpy(mutable_key, key_str, BUFFER_SIZE);
+    mutable_key[BUFFER_SIZE - 1] = '\0';
+
+    key.dptr  = mutable_key;
+    key.dsize = (int)strlen(mutable_key);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waggregate-return"
-    result = dbm_fetch(ctx->request_db, *(datum *)&key_datum);
+    value = gdbm_fetch(ctx->request_db, key);
 #pragma GCC diagnostic pop
 
-    if(result.dptr)
+    if(value.dptr)
     {
-        print_key_value(key_str, result.dptr);
+        char *safe_val = (char *)malloc((unsigned long)value.dsize + 1);
+        if(!safe_val)
+        {
+            fprintf(stderr, "Memory allocation failed.\n");
+            free(value.dptr);
+            return EXIT_FAILURE;
+        }
+        memcpy(safe_val, value.dptr, (unsigned long)value.dsize);
+        safe_val[value.dsize] = '\0';
+        print_key_value(key, safe_val);
+        free(safe_val);
+        free(value.dptr);
         return EXIT_SUCCESS;
     }
 
@@ -139,14 +113,6 @@ static int fetch_value(DBContext *ctx, const char *key_str)
     return EXIT_FAILURE;
 }
 
-/*
-    Parses command-line arguments and stores results in ParsedArgs
-
-    @param
-    argc: Argument count
-    argv: Argument vector
-    parsed_args: Output struct to store the parsed command and key (if any)
- */
 static void parse_arguments(int argc, char *argv[], ParsedArgs *parsed_args)
 {
     int opt;
@@ -162,24 +128,20 @@ static void parse_arguments(int argc, char *argv[], ParsedArgs *parsed_args)
             parsed_args->cmd = CMD_HELP;
             return;
         }
-
         if(opt == 'a')
         {
             parsed_args->cmd = CMD_ALL;
         }
-
-        if(opt == 'k')
+        else if(opt == 'k')
         {
             parsed_args->cmd     = CMD_KEY;
             parsed_args->key_arg = optarg;
         }
-
-        if(opt == 'l')
+        else if(opt == 'l')
         {
             parsed_args->cmd = CMD_LATEST;
         }
-
-        if(opt != 'a' && opt != 'k' && opt != 'l')
+        else
         {
             usage(argv[0], EXIT_FAILURE, "Invalid option.");
         }
@@ -201,14 +163,6 @@ static void parse_arguments(int argc, char *argv[], ParsedArgs *parsed_args)
     }
 }
 
-/*
-    Prints usage information and exits the program
-
-    @param
-    program_name: Name of the executable
-    exit_code: Exit status code
-    message: Optional error or help message to display
- */
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message)
 {
     if(message)
@@ -225,32 +179,21 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
     exit(exit_code);
 }
 
-/*
-    Retrieves the last inserted key from the database using the __counter__ value.
-
-    @param
-    db: Open DBM database pointer
-    key_out: Output buffer to store the last key
-    buf_size: Size of the output buffer
-
-    @return
-    0 on success, -1 on failure
- */
-static int get_last_key(DBM *db, char *key_out, size_t buf_size)
+static int get_last_key(GDBM_FILE db, char *key_out, size_t buf_size)
 {
     datum counter_key;
     datum counter_val;
-    char  counter_key_buf[BUFFER_SIZE];
     int   counter;
-    char *endptr = NULL;
+    char *endptr;
+    char  counter_key_buf[] = "__counter__";
+    char *counter_str;
 
-    strcpy(counter_key_buf, "__counter__");
     counter_key.dptr  = counter_key_buf;
-    counter_key.dsize = strlen("__counter__") + 1;
+    counter_key.dsize = (int)strlen(counter_key_buf);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waggregate-return"
-    counter_val = dbm_fetch(db, counter_key);
+    counter_val = gdbm_fetch(db, counter_key);
 #pragma GCC diagnostic pop
 
     if(!counter_val.dptr)
@@ -259,9 +202,21 @@ static int get_last_key(DBM *db, char *key_out, size_t buf_size)
         return -1;
     }
 
-    counter = (int)strtol(counter_val.dptr, &endptr, BASE_TEN);
+    counter_str = (char *)malloc((unsigned long)counter_val.dsize + 1);
+    if(!counter_str)
+    {
+        fprintf(stderr, "Memory allocation failed.\n");
+        free(counter_val.dptr);
+        return -1;
+    }
+    memcpy(counter_str, counter_val.dptr, (unsigned long)counter_val.dsize);
+    counter_str[counter_val.dsize] = '\0';
+    free(counter_val.dptr);
 
-    if(endptr == counter_val.dptr || *endptr != '\0' || counter <= 0)
+    counter = (int)strtol(counter_str, &endptr, BASE_TEN);
+    free(counter_str);
+
+    if(endptr == counter_str || *endptr != '\0' || counter <= 0)
     {
         fprintf(stderr, "Invalid or empty counter value.\n");
         return -1;
@@ -271,64 +226,57 @@ static int get_last_key(DBM *db, char *key_out, size_t buf_size)
     return 0;
 }
 
-/*
-    Iterates over all key-value pairs in the DB and prints them.
-
-    @param
-    ctx: The open DB context
-
-    @return
-    EXIT_SUCCESS if completed, EXIT_FAILURE if DB error occurs
- */
 static int fetch_all(DBContext *ctx)
 {
-    datum key;
-    datum value;
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waggregate-return"
-    key = dbm_firstkey(ctx->request_db);
+    datum key = gdbm_firstkey(ctx->request_db);
 #pragma GCC diagnostic pop
 
-    if(key.dptr == NULL)
+    if(!key.dptr)
     {
         printf("Database is empty.\n");
         return EXIT_SUCCESS;
     }
 
-    while(key.dptr != NULL)
+    while(key.dptr)
     {
-        // Skip internal counter key
-        if(strcmp(key.dptr, "__counter__") != 0)
+        datum next;
+        if(strncmp(key.dptr, "__counter__", (unsigned long)key.dsize) != 0)
         {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waggregate-return"
-            value = dbm_fetch(ctx->request_db, key);
+            datum value = gdbm_fetch(ctx->request_db, key);
 #pragma GCC diagnostic pop
-
             if(value.dptr)
             {
-                print_key_value(key.dptr, value.dptr);
+                char *safe_val = (char *)malloc((unsigned long)value.dsize + 1);
+                if(!safe_val)
+                {
+                    fprintf(stderr, "Memory allocation failed.\n");
+                    free(value.dptr);
+                    free(key.dptr);
+                    return EXIT_FAILURE;
+                }
+                memcpy(safe_val, value.dptr, (unsigned long)value.dsize);
+                safe_val[value.dsize] = '\0';
+                print_key_value(key, safe_val);
+                free(safe_val);
+                free(value.dptr);
             }
         }
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waggregate-return"
-        key = dbm_nextkey(ctx->request_db);
+        next = gdbm_nextkey(ctx->request_db, key);
 #pragma GCC diagnostic pop
+        free(key.dptr);
+        key = next;
     }
 
     return EXIT_SUCCESS;
 }
 
-/*
-    Prints a key-value pair in a formatted style
-
-    @param
-    key: The key string
-    value: The associated value string
- */
-static void print_key_value(char *key, const char *value)
+static void print_key_value(datum key, const char *value)
 {
-    printf("Key:\t%s\nValue:\t%s\n\n", key, value);
+    printf("Key:\t%.*s\nValue:\t%s\n\n", key.dsize, key.dptr, value);
 }

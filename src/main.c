@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
 #if defined(__linux__)
     #include <sys/epoll.h>
 #elif defined(__FreeBSD__) || defined(__APPLE__)
@@ -56,15 +57,15 @@ static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid
 int main(int argc, char *argv[])
 {
     void              *handle;
-    fd_set             readfds;                                        // Set of file descriptors for select
-    size_t             max_clients;                                    // Maximum number of clients that can connect
-    struct sockaddr_in host_addr;                                      // Server's address structure
-    unsigned int       host_addrlen;                                   // Length of the server address
-    int               *client_sockets = (int *)malloc(sizeof(int));    // Array of active client sockets
-    int                sd             = 0;                             // Temp variable for socket descriptor
-    int                max_fd;                                         // Maximum file descriptor for select
-    int                dsfd[2];                                        // the domain socket for server->monitor
-    int              **worker_sockets;                                 // Stores UNIX socket pairs for each worker
+    fd_set             readfds;                  // Set of file descriptors for select
+    size_t             max_clients;              // Maximum number of clients that can connect
+    struct sockaddr_in host_addr;                // Server's address structure
+    unsigned int       host_addrlen;             // Length of the server address
+    int               *client_sockets = NULL;    // Array of active client sockets
+    int                sd             = 0;       // Temp variable for socket descriptor
+    int                max_fd;                   // Maximum file descriptor for select
+    int                dsfd[2];                  // the domain socket for server->monitor
+    int              **worker_sockets;           // Stores UNIX socket pairs for each worker
     pid_t             *child_pids;
     pid_t              monitor;
     int                server_fd;
@@ -411,7 +412,7 @@ int main(int argc, char *argv[])
                 client_sockets                  = temp;
                 client_sockets[max_clients - 1] = newsockfd;
             }
-            // printf("Sending client fd %d\n", newsockfd);
+            printf("Sending client fd %d\n", newsockfd);
             send_fd(dsfd[0], newsockfd);
             close(newsockfd);
 
@@ -436,7 +437,7 @@ int main(int argc, char *argv[])
             // printf("received fd from monitor: %d\n", fd_from_monitor);
 
 // Add the FD back to readfds after getting it from the worker
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
             FD_SET(fd_from_monitor, &readfds);
 #endif
 
@@ -575,7 +576,13 @@ static int handle_request(struct sockaddr_in client_addr, int client_fd, void *h
     {
         int (*handle_post_lib)(const char *, int) = NULL;
 
+#if defined(__linux__)
         *(void **)(&handle_post_lib) = dlsym(handle, "handle_post_request");
+
+#else
+        *(void **)(&handle_post_lib) = dlsym(handle, "handle_post_request_mac");
+
+#endif
         if(!handle_post_lib)
         {
             fprintf(stderr, "dlsym failed (handle_post_request): %s\n", dlerror());
@@ -900,6 +907,12 @@ static int worker_loop(time_t last_time, void *handle, int i, int client_sockets
 
             last_time = new_time;
         }
+
+        // FOR TESTING THAT CHILD REBIRTH WORKS
+        //        if(i == 0)
+        //        {
+        //            exit(TIME_SIZE);    // Non-zero to indicate failure
+        //        }
 
         // Get client address
         sockn = getsockname(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addrlen);

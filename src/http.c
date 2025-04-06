@@ -1,7 +1,14 @@
 #include "http.h"
 #include <ctype.h>
 #include <fcntl.h>
-#include <ndbm.h>
+#if(defined(__APPLE__) && defined(__MACH__))
+    #include <gdbm.h>
+#endif
+
+#if defined(__linux__)
+    #include <ndbm.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +19,7 @@
 #define HTTP_OK "HTTP/1.0 200 OK\r\n"
 #define HTTP_NOT_FOUND "HTTP/1.0 404 Not Found\r\n"
 #define HTTP_BAD_REQUEST "HTTP/1.0 400 Bad Request\r\n"
-#define HTTP_METHOD_NOT_ALLOWED "HTTP/1.0 405 Method Not Allowed\r\nAllow: GET, HEAD\r\n"
+#define HTTP_METHOD_NOT_ALLOWED "HTTP/1.0 405 Method Not Allowed\r\nAllow: GET, HEAD, POST\r\n"
 
 #define HTML_CONTENT_TYPE "Content-Type: text/html\r\n"
 #define TEXT_CONTENT_TYPE "Content-Type: text/plain\r\n"
@@ -30,6 +37,7 @@
 #define FOUR 4
 #define DB_BUFFER 16
 #define BASE_TEN 10
+#define PERMS 0666
 
 #define INDEX_FILE_PATH "/index.html"
 
@@ -41,7 +49,7 @@
 #define PNG_EXT "gnp"
 #define GIF_EXT "fig"
 #define TXT_EXT "txt"
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
     #define FILE_PATH_LEN 11
 typedef size_t datum_size;
 #endif
@@ -69,7 +77,7 @@ void my_function(const char *str)
 {
     for(size_t i = 0; i < strlen(str); i++)
     {
-        printf("%c", toupper(str[i]));
+        printf("%c", tolower(str[i]));
     }
 }
 
@@ -145,7 +153,7 @@ static void open_file_at_path(const char *request_path, int *file_fd, struct sta
     *file_fd = open(path, O_RDONLY | O_CLOEXEC);
     stat(path, file_stat);
 
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
     printf("File size of %s: %lld bytes\n", path, file_stat->st_size);
 #endif
 
@@ -245,7 +253,7 @@ static int write_to_content_string(char **content_string, unsigned long *length,
         return -2;
     }
 
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
     printf("filestat st_size: %lld\n", fileStat->st_size);
 #endif
 
@@ -312,7 +320,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
 
     if(strcmp(file_extension, TXT_EXT) == 0)
     {
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, TEXT_CONTENT_TYPE, strlen(TEXT_CONTENT_TYPE));
         content_type_string[strlen(TEXT_CONTENT_TYPE)] = '\0';
 #endif
@@ -325,7 +333,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
 
     else if(strcmp(file_extension, JS_EXT) == 0)
     {
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, JS_CONTENT_TYPE, strlen(JS_CONTENT_TYPE));
         content_type_string[strlen(JS_CONTENT_TYPE)] = '\0';
 #endif
@@ -337,7 +345,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else if(strcmp(file_extension, CSS_EXT) == 0)
     {
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, CSS_CONTENT_TYPE, strlen(CSS_CONTENT_TYPE));
         content_type_string[strlen(CSS_CONTENT_TYPE)] = '\0';
 #endif
@@ -349,9 +357,9 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else if(strcmp(file_extension, JPG_EXT) == 0 || strcmp(file_extension, JPEG_EXT) == 0)
     {
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, JPEG_CONTENT_TYPE, strlen(JPEG_CONTENT_TYPE));
-        content_type_string[strlen(TEXT_JPEG_TYPE)] = '\0';
+        content_type_string[strlen(JPEG_CONTENT_TYPE)] = '\0';
 #endif
 
 #if defined(__linux__)
@@ -361,7 +369,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else if(strcmp(file_extension, PNG_EXT) == 0)
     {
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, PNG_CONTENT_TYPE, strlen(PNG_CONTENT_TYPE));
         content_type_string[strlen(PNG_CONTENT_TYPE)] = '\0';
 #endif
@@ -373,7 +381,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else if(strcmp(file_extension, GIF_EXT) == 0)
     {
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, GIF_CONTENT_TYPE, strlen(GIF_CONTENT_TYPE));
         content_type_string[strlen(GIF_CONTENT_TYPE)] = '\0';
 #endif
@@ -385,7 +393,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else
     {
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, HTML_CONTENT_TYPE, strlen(HTML_CONTENT_TYPE));
         content_type_string[strlen(HTML_CONTENT_TYPE)] = '\0';
 #endif
@@ -496,7 +504,7 @@ static void append_body(char *response_string, const char *content_string, unsig
     {
         strncat(response_string, content_string, length);
 
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
         strncat(response_string, "\r\n", 2);
 #endif
 
@@ -599,7 +607,7 @@ static int write_to_content_binary(int fd, const char *file_path)
         return -2;
     }
 
-#if (defined(__APPLE__) && defined(__MACH__))
+#if(defined(__APPLE__) && defined(__MACH__))
     printf("File size: %lld bytes\n", fileStat->st_size);
 #endif
 
@@ -841,6 +849,8 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
     return result;
 }
 
+#if defined(__linux__)
+
 /*
     Handles POST requests by extracting the body and storing it in an ndbm database.
     Sends an appropriate HTTP response back to the client.
@@ -851,13 +861,13 @@ int handle_client(int newsockfd, const char *request_path, int is_head, int is_i
  */
 __attribute__((visibility("default"))) int handle_post_request(const char *buffer, int client_fd)
 {
-    DBM        *db;
-    datum       key;
-    datum       value;
-    datum       counter_key;
-    datum       counter_val;
-    datum       new_counter_val;
-    char        db_name[DB_BUFFER];
+    DBM  *db;
+    datum key;
+    datum value;
+    datum counter_key;
+    datum counter_val;
+    datum new_counter_val;
+    //    char        db_name[DB_BUFFER];
     char        key_str[DB_BUFFER];
     char        counter_buf[DB_BUFFER];
     char        counter_key_buf[DB_BUFFER];
@@ -865,7 +875,7 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
     const char *response;
     int         counter = 0;
 
-    strcpy(db_name, "requests_db");
+    //    strcpy(db_name, "requests_db");
     strcpy(key_str, "post_data");
     strcpy(counter_key_buf, "__counter__");
 
@@ -888,7 +898,7 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
     }
 
     // Open DB
-    db = dbm_open(db_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    db = dbm_open("requests_db", O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if(!db)
     {
         perror("dbm_open");
@@ -905,18 +915,18 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
     counter_key.dptr  = counter_key_buf;
     counter_key.dsize = strlen("__counter__") + 1;
 
-// Fetch existing counter
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Waggregate-return"
+    // Fetch existing counter
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Waggregate-return"
     counter_val = dbm_fetch(db, counter_key);
-#pragma GCC diagnostic pop
+    #pragma GCC diagnostic pop
     if(counter_val.dptr != NULL)
     {
         char *endptr = NULL;
-        counter      = (int)strtol(counter_val.dptr, &endptr, BASE_TEN);
+        counter      = (int)strtol((const char *)counter_val.dptr, &endptr, BASE_TEN);
         if(endptr == counter_val.dptr || *endptr != '\0')
         {
-            fprintf(stderr, "Invalid counter value in DB: %s\n", counter_val.dptr);
+            fprintf(stderr, "Invalid counter value in DB: %s\n", (char *)counter_val.dptr);
             counter = 0;
         }
     }
@@ -949,7 +959,10 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
     snprintf(counter_buf, DB_BUFFER, "%d", counter + 1);
     new_counter_val.dptr  = counter_buf;
     new_counter_val.dsize = (datum_size)strlen(counter_buf) + 1;
-    dbm_store(db, counter_key, new_counter_val, DBM_REPLACE);
+    if(dbm_store(db, counter_key, new_counter_val, DBM_REPLACE) != 0)
+    {
+        perror("dbm_store __counter__");
+    }
 
     dbm_close(db);
 
@@ -965,6 +978,142 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
 
     return 0;
 }
+#endif
+
+#if(defined(__APPLE__) && defined(__MACH__))
+__attribute__((visibility("default"))) int handle_post_request_mac(const char *buffer, int client_fd)
+{
+    GDBM_FILE   db;
+    datum       key;
+    datum       value;
+    datum       counter_key;
+    datum       counter_val;
+    datum       new_counter_val;
+    char        key_str[DB_BUFFER];
+    char        counter_buf[DB_BUFFER];
+    char        counter_key_buf[] = "__counter__";
+    char       *body;
+    const char *response;
+    int         counter = 0;
+
+    strcpy(key_str, "post_data");
+
+    // Extract POST body
+    body = strstr(buffer, "\r\n\r\n");
+    if(body)
+    {
+        body += FOUR;
+        printf("POST data received: %s\n", body);
+    }
+    else
+    {
+        response = "HTTP/1.0 400 Bad Request\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 11\r\n"
+                   "\r\n"
+                   "Bad Request";
+        write(client_fd, response, strlen(response));
+        return 1;
+    }
+
+    // Open GDBM DB
+    db = gdbm_open("requests_db.db", 0, GDBM_WRCREAT, PERMS, NULL);
+    if(!db)
+    {
+        perror("gdbm_open");
+        response = "HTTP/1.0 500 Internal Server Error\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 25\r\n"
+                   "\r\n"
+                   "Internal Server Error.\n";
+        write(client_fd, response, strlen(response));
+        return 1;
+    }
+
+    // Try to fetch existing counter
+    counter_key.dptr  = counter_key_buf;
+    counter_key.dsize = (int)strlen(counter_key_buf);
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Waggregate-return"
+    counter_val = gdbm_fetch(db, counter_key);
+    #pragma GCC diagnostic pop
+
+    if(counter_val.dsize < 0)
+    {
+        fprintf(stderr, "Invalid size from gdbm_fetch\n");
+        free(counter_val.dptr);
+        return 1;
+    }
+    if(counter_val.dptr)
+    {
+        char *endptr;
+        char *safe = (char *)malloc((size_t)counter_val.dsize + 1);
+        if(!safe)
+        {
+            perror("malloc");
+            return 1;
+        }
+
+        memcpy(safe, counter_val.dptr, (size_t)counter_val.dsize);
+        safe[counter_val.dsize] = '\0';    // null-terminate
+
+        counter = (int)strtol(safe, &endptr, BASE_TEN);
+
+        free(safe);
+        free(counter_val.dptr);
+        if(endptr == counter_val.dptr || *endptr != '\0')
+        {
+            fprintf(stderr, "Invalid counter value in DB.\n");
+            counter = 0;
+        }
+    }
+
+    // Generate key
+    snprintf(key_str, DB_BUFFER, "%d", counter);
+    key.dptr  = key_str;
+    key.dsize = (int)strlen(key_str);
+
+    value.dptr  = body;
+    value.dsize = (int)strlen(body);
+
+    if(gdbm_store(db, key, value, GDBM_REPLACE) != 0)
+    {
+        perror("gdbm_store");
+        gdbm_close(db);
+        response = "HTTP/1.0 500 Internal Server Error\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 28\r\n"
+                   "\r\n"
+                   "Failed to store POST data.\n";
+        write(client_fd, response, strlen(response));
+        return 1;
+    }
+
+    printf("Stored POST Data under Key: %s\n", key_str);
+
+    // Update counter
+    snprintf(counter_buf, DB_BUFFER, "%d", counter + 1);
+    new_counter_val.dptr  = counter_buf;
+    new_counter_val.dsize = (int)strlen(counter_buf);
+    if(gdbm_store(db, counter_key, new_counter_val, GDBM_REPLACE) != 0)
+    {
+        perror("gdbm_store __counter__");
+    }
+
+    gdbm_close(db);
+
+    response = "HTTP/1.0 200 OK\r\n"
+               "Content-Type: text/plain\r\n"
+               "Content-Length: 24\r\n"
+               "\r\n"
+               "POST data stored in DB.\n";
+
+    printf("POST response:\n%s\n", response);
+    write(client_fd, response, strlen(response));
+
+    return 0;
+}
+#endif
 
 /*
     Checks if the HTTP request is for an image
@@ -1118,7 +1267,7 @@ static int has_valid_first_line(const char *buffer)
 
 /*
     Checks to make sure headers have colons and end in \r\n\r\n, and each ends with \r\n
-    This assumes the request line has already been validate
+    This assumes the request line has already been validated
 
     @param
     buffer: Holds the entire HTTP request

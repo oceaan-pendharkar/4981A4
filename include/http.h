@@ -13,4 +13,9 @@ int  handle_client(int newsockfd, const char *request_path, int is_head, int is_
 int  handle_post_request(const char *buffer, int client_fd);
 int  is_img_request(const char *buffer);
 int  is_http_request(const char *buffer);
+
+#if(defined(__APPLE__) && defined(__MACH__))
+int handle_post_request_mac(const char *buffer, int client_fd);
+#endif
+
 #endif
