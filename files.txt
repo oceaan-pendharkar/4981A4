@@ -1,2 +1,2 @@
-main src/main.c src/http.c include/http.h gdbm_compat
-db src/db.c gdbm_compat
+main src/main.c src/http.c include/http.h gdbm
+db src/db_mac.c gdbm
