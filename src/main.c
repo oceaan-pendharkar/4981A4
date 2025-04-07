@@ -831,14 +831,23 @@ static void check_for_dead_children(time_t last_time, void *handle, int client_s
  */
 static int worker_loop(time_t last_time, void *handle, int i, int client_sockets[], int **worker_sockets)
 {
+    time_t new_time;
+    char   last_time_str[TIME_SIZE];
+    char   new_time_str[TIME_SIZE];
+
+    // Check if http.so has been updated
+    new_time = get_last_modified_time("./http.so");
+    // Testing
+    format_timestamp(last_time, last_time_str, sizeof(last_time_str));
+    format_timestamp(new_time, new_time_str, sizeof(new_time_str));
+    printf("[Worker %d] Checking http.so timestamps\n", i);
+    printf("Last: %s | New: %s\n\n", last_time_str, new_time_str);
+
     while(!exit_flag)
     {
-        int    sockn;
-        int    handle_result;
-        int    fd;
-        time_t new_time;
-        char   last_time_str[TIME_SIZE];
-        char   new_time_str[TIME_SIZE];
+        int sockn;
+        int handle_result;
+        int fd;
         void (*my_func)(const char *);
         // Create client address
         struct sockaddr_in client_addr;
