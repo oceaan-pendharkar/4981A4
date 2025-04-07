@@ -41,7 +41,7 @@
 #define PNG_EXT "gnp"
 #define GIF_EXT "fig"
 #define TXT_EXT "txt"
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     #define FILE_PATH_LEN 11
 typedef size_t datum_size;
 #endif
@@ -145,7 +145,7 @@ static void open_file_at_path(const char *request_path, int *file_fd, struct sta
     *file_fd = open(path, O_RDONLY | O_CLOEXEC);
     stat(path, file_stat);
 
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     printf("File size of %s: %lld bytes\n", path, file_stat->st_size);
 #endif
 
@@ -245,7 +245,7 @@ static int write_to_content_string(char **content_string, unsigned long *length,
         return -2;
     }
 
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     printf("filestat st_size: %lld\n", fileStat->st_size);
 #endif
 
@@ -312,7 +312,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
 
     if(strcmp(file_extension, TXT_EXT) == 0)
     {
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, TEXT_CONTENT_TYPE, strlen(TEXT_CONTENT_TYPE));
         content_type_string[strlen(TEXT_CONTENT_TYPE)] = '\0';
 #endif
@@ -325,7 +325,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
 
     else if(strcmp(file_extension, JS_EXT) == 0)
     {
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, JS_CONTENT_TYPE, strlen(JS_CONTENT_TYPE));
         content_type_string[strlen(JS_CONTENT_TYPE)] = '\0';
 #endif
@@ -337,7 +337,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else if(strcmp(file_extension, CSS_EXT) == 0)
     {
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, CSS_CONTENT_TYPE, strlen(CSS_CONTENT_TYPE));
         content_type_string[strlen(CSS_CONTENT_TYPE)] = '\0';
 #endif
@@ -349,7 +349,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else if(strcmp(file_extension, JPG_EXT) == 0 || strcmp(file_extension, JPEG_EXT) == 0)
     {
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, JPEG_CONTENT_TYPE, strlen(JPEG_CONTENT_TYPE));
         content_type_string[strlen(JPEG_CONTENT_TYPE)] = '\0';
 #endif
@@ -361,7 +361,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else if(strcmp(file_extension, PNG_EXT) == 0)
     {
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, PNG_CONTENT_TYPE, strlen(PNG_CONTENT_TYPE));
         content_type_string[strlen(PNG_CONTENT_TYPE)] = '\0';
 #endif
@@ -373,7 +373,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else if(strcmp(file_extension, GIF_EXT) == 0)
     {
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, GIF_CONTENT_TYPE, strlen(GIF_CONTENT_TYPE));
         content_type_string[strlen(GIF_CONTENT_TYPE)] = '\0';
 #endif
@@ -385,7 +385,7 @@ static void set_content_type_from_file_extension(const char *request_path, char 
     }
     else
     {
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
         strncpy(content_type_string, HTML_CONTENT_TYPE, strlen(HTML_CONTENT_TYPE));
         content_type_string[strlen(HTML_CONTENT_TYPE)] = '\0';
 #endif
@@ -496,7 +496,7 @@ static void append_body(char *response_string, const char *content_string, unsig
     {
         strncat(response_string, content_string, length);
 
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
         strncat(response_string, "\r\n", 2);
 #endif
 
@@ -599,7 +599,7 @@ static int write_to_content_binary(int fd, const char *file_path)
         return -2;
     }
 
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
     printf("File size: %lld bytes\n", fileStat->st_size);
 #endif
 
@@ -916,7 +916,14 @@ __attribute__((visibility("default"))) int handle_post_request(const char *buffe
         counter      = (int)strtol(counter_val.dptr, &endptr, BASE_TEN);
         if(endptr == counter_val.dptr || *endptr != '\0')
         {
+#if (defined(__APPLE__) && defined(__MACH__))
             fprintf(stderr, "Invalid counter value in DB: %s\n", (char *)counter_val.dptr);
+#endif
+
+#if defined(__linux__)
+            fprintf(stderr, "Invalid counter value in DB: %s\n", counter_val.dptr);
+#endif
+
             counter = 0;
         }
     }

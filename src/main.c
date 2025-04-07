@@ -436,7 +436,7 @@ int main(int argc, char *argv[])
             // printf("received fd from monitor: %d\n", fd_from_monitor);
 
 // Add the FD back to readfds after getting it from the worker
-#if(defined(__APPLE__) && defined(__MACH__))
+#if (defined(__APPLE__) && defined(__MACH__))
             FD_SET(fd_from_monitor, &readfds);
 #endif
 
